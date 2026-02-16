@@ -1,0 +1,10 @@
+[package]
+name = "polykit-sanitize"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "3-stage compliance sanitization pipeline: PII detect, value transform, PoVC-witnessed audit"
+
+[dependencies]
+polykit-core = { workspace = true }
+serde = { workspace = true }

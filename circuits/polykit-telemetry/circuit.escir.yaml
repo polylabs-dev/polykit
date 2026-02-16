@@ -1,0 +1,92 @@
+escir: "0.8.1"
+name: polykit-telemetry
+version: "0.1.0"
+lex: polykit.telemetry
+target: wasm-client
+description: >
+  StreamSight telemetry pipeline circuit. Reusable by all Poly apps.
+  Collects metrics, compares against learned baselines, emits deviations.
+  Implements the "Discard Normal" architecture — only persists anomalies.
+
+emissions:
+  - topic: "lex://estream/apps/{app_namespace}/telemetry"
+    payload: TelemetryEvent
+    annotations:
+      "@streamsight_filter": "baseline"
+      "@streamsight_sensitivity": 2.5
+      "@streamsight_warmup": 500
+      "@streamsight_sample_normal": 0.01
+
+  - topic: "lex://estream/apps/{app_namespace}/metrics/deviations"
+    payload: Deviation
+    annotations:
+      "@streamsight_filter": "none"
+
+exports:
+  - fn: emit_gauge
+    desc: "Record a gauge metric (instantaneous value)"
+    params:
+      - name: metric
+        type: string
+      - name: value
+        type: f64
+      - name: labels
+        type: "Map<string, string>"
+    returns: void
+
+  - fn: emit_counter
+    desc: "Increment a counter metric"
+    params:
+      - name: metric
+        type: string
+      - name: delta
+        type: u64
+      - name: labels
+        type: "Map<string, string>"
+    returns: void
+
+  - fn: emit_event
+    desc: "Record a discrete event"
+    params:
+      - name: event_type
+        type: string
+      - name: payload
+        type: bytes
+    returns: void
+
+  - fn: check_baseline
+    desc: "Compare a value against the learned baseline"
+    params:
+      - name: metric
+        type: string
+      - name: value
+        type: f64
+    returns: BaselineCheck
+
+types:
+  TelemetryEvent:
+    struct:
+      metric: string
+      value: f64
+      labels: "Map<string, string>"
+      timestamp_ms: u64
+      circuit: string
+
+  Deviation:
+    struct:
+      timestamp_ms: u64
+      metric: string
+      circuit: string
+      z_score: f64
+      observed: f64
+      baseline: f64
+      severity: DeviationSeverity
+
+  DeviationSeverity:
+    enum: [Deviation, Anomaly]
+
+  BaselineCheck:
+    struct:
+      within_baseline: bool
+      z_score: f64
+      baseline_value: f64

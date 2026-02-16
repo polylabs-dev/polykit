@@ -1,0 +1,64 @@
+escir: "0.8.1"
+name: polykit-eslm-classify
+version: "0.1.0"
+lex: polykit.eslm.classify
+target: wasm-client
+description: >
+  Generic ESLM auto-classification circuit. Reusable by any Poly app
+  that needs ML-based content classification with human-in-the-loop feedback.
+
+emissions:
+  - topic: "lex://estream/apps/{app_namespace}/eslm/classification"
+    payload: ClassificationSuggestion
+    annotations:
+      "@streamsight_filter": "baseline"
+      "@streamsight_sensitivity": 1.5
+
+exports:
+  - fn: classify_content
+    desc: "Auto-classify content using ESLM"
+    params:
+      - name: content_sample
+        type: bytes
+      - name: filename
+        type: string
+      - name: metadata
+        type: "Map<string, string>"
+    returns: ClassificationSuggestion
+
+  - fn: submit_human_feedback
+    desc: "Submit human review feedback for ESLM training"
+    params:
+      - name: feedback
+        type: HumanFeedback
+    returns: void
+
+  - fn: get_confidence_thresholds
+    desc: "Get current confidence thresholds for auto-accept/review"
+    returns: ConfidenceThresholds
+
+types:
+  ClassificationSuggestion:
+    struct:
+      tag: string
+      confidence: f64
+      alternatives: "Vec<Alternative>"
+
+  Alternative:
+    struct:
+      tag: string
+      confidence: f64
+
+  HumanFeedback:
+    struct:
+      sample_hash: bytes(32)
+      rating: u8
+      correction: "Option<string>"
+      reviewer_hash: bytes(32)
+      timestamp_ms: u64
+
+  ConfidenceThresholds:
+    struct:
+      auto_accept: f64
+      review_required: f64
+      auto_reject: f64

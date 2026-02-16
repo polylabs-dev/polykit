@@ -1,0 +1,13 @@
+[package]
+name = "polykit-console"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Console widget data pipeline: event bus, RBAC, demo fixtures, StreamSight/ESLM processors — WASM-native"
+
+[dependencies]
+polykit-core = { workspace = true }
+polykit-sanitize = { workspace = true }
+streamsight = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

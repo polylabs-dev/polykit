@@ -1,0 +1,19 @@
+[package]
+name = "polykit-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WASM entry point — wasm-bindgen exports for all polykit crates"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+polykit-core = { workspace = true }
+polykit-eslite = { workspace = true }
+polykit-console = { workspace = true }
+polykit-sanitize = { workspace = true }
+wasm-bindgen = { workspace = true }
+js-sys = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

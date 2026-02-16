@@ -1,0 +1,76 @@
+escir: "0.8.1"
+name: polykit-identity
+version: "0.1.0"
+lex: polykit.identity
+target: wasm-client
+description: >
+  SPARK authentication and HKDF key derivation circuit.
+  Derives per-app ML-DSA-87 signing and ML-KEM-1024 encryption keys
+  from SPARK master seed using HKDF-SHA3-256 with app-specific context.
+
+exports:
+  - fn: derive_keys
+    desc: "Derive signing + encryption keys from SPARK master seed"
+    params:
+      - name: master_seed
+        type: bytes(32)
+      - name: hkdf_context
+        type: string
+    returns: DerivedKeys
+
+  - fn: derive_user_id
+    desc: "Compute user_id from ML-DSA-87 public key"
+    params:
+      - name: signing_public_key
+        type: bytes
+    returns: bytes(16)
+
+  - fn: sign
+    desc: "Sign data with ML-DSA-87"
+    params:
+      - name: secret_key
+        type: bytes
+      - name: message
+        type: bytes
+    returns: bytes
+
+  - fn: verify
+    desc: "Verify ML-DSA-87 signature"
+    params:
+      - name: public_key
+        type: bytes
+      - name: message
+        type: bytes
+      - name: signature
+        type: bytes
+    returns: bool
+
+  - fn: encapsulate
+    desc: "ML-KEM-1024 key encapsulation"
+    params:
+      - name: recipient_public_key
+        type: bytes
+    returns: EncapsulatedKey
+
+  - fn: decapsulate
+    desc: "ML-KEM-1024 key decapsulation"
+    params:
+      - name: secret_key
+        type: bytes
+      - name: ciphertext
+        type: bytes
+    returns: bytes(32)
+
+types:
+  DerivedKeys:
+    struct:
+      user_id: bytes(16)
+      signing_public_key: bytes
+      signing_secret_key: bytes
+      encryption_public_key: bytes
+      encryption_secret_key: bytes
+
+  EncapsulatedKey:
+    struct:
+      ciphertext: bytes
+      shared_secret: bytes(32)

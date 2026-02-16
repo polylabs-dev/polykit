@@ -1,0 +1,29 @@
+# Rust
+target/
+Cargo.lock
+
+# Node
+node_modules/
+dist/
+packages/react/dist/
+
+# WASM build artifacts
+*.wasm
+*.wasm.sig
+*.escd
+*.wat
+pkg/
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+*.pem

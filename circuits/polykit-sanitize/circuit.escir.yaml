@@ -1,0 +1,58 @@
+escir: "0.8.1"
+name: polykit-sanitize
+version: "0.1.0"
+lex: polykit.sanitize
+target: wasm-client
+description: >
+  3-stage compliance sanitization pipeline circuit.
+  Stage 1: PII detection (SSN, PAN, names, emails, medical records)
+  Stage 2: Value transform (redaction, abstraction, masking)
+  Stage 3: PoVC-witnessed audit record
+  Compliance: HIPAA, PCI-DSS, GDPR, SOC2
+
+exports:
+  - fn: sanitize
+    desc: "Run full 3-stage pipeline on input data"
+    params:
+      - name: input
+        type: bytes
+    returns: SanitizationResult
+
+  - fn: detect_only
+    desc: "Stage 1 only — detect PII without transforming"
+    params:
+      - name: input
+        type: bytes
+    returns: "Vec<Detection>"
+
+types:
+  SanitizationResult:
+    struct:
+      sanitized_data: bytes
+      audit_entries: "Vec<AuditEntry>"
+
+  Detection:
+    struct:
+      field_path: string
+      data_type: DataType
+      regulation: "Vec<Regulation>"
+      confidence: f64
+
+  AuditEntry:
+    struct:
+      timestamp_ms: u64
+      stage: Stage
+      field_path: string
+      original_type: string
+      placeholder: string
+      regulations: "Vec<string>"
+      witness_hash: string
+
+  DataType:
+    enum: [Ssn, CreditCard, PersonalName, Email, PhoneNumber, DateOfBirth, Address, MedicalRecord, FinancialAccount, BiometricData]
+
+  Regulation:
+    enum: [Hipaa, PciDss, Gdpr, Soc2, Ccpa]
+
+  Stage:
+    enum: [PiiDetect, ValueTransform, AuditRecord]

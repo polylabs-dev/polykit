@@ -1,0 +1,72 @@
+escir: "0.8.1"
+name: polykit-metering
+version: "0.1.0"
+lex: polykit.metering
+target: wasm-client
+description: >
+  8-dimension resource metering circuit. Reusable by all Poly apps.
+  Tracks: E (executions), H (hashes), B (bandwidth), S (storage),
+  O (observables), P (proofs), C (circuits), M (MPC sessions).
+
+emissions:
+  - topic: "{app_namespace}.metering.{user_id}"
+    payload: MeteringRecord
+    annotations:
+      "@streamsight_filter": "baseline"
+      "@streamsight_sensitivity": 2.0
+      "@streamsight_warmup": 1000
+
+exports:
+  - fn: record_usage
+    desc: "Record a metering event for a single operation"
+    params:
+      - name: user_id
+        type: bytes(16)
+      - name: operation
+        type: string
+      - name: dimensions
+        type: DimensionValues
+    returns: MeteringRecord
+
+  - fn: check_limits
+    desc: "Check if current usage exceeds tier limits"
+    params:
+      - name: current
+        type: DimensionValues
+      - name: tier_limits
+        type: TierLimits
+    returns: "Vec<MeteringDimension>"
+
+  - fn: get_usage_summary
+    desc: "Get accumulated usage for a user in the current billing period"
+    params:
+      - name: user_id
+        type: bytes(16)
+    returns: DimensionValues
+
+types:
+  MeteringDimension:
+    enum: [Executions, Hashes, Bandwidth, Storage, Observables, Proofs, Circuits, MpcSessions]
+
+  DimensionValues:
+    struct:
+      executions: u64
+      hashes: u64
+      bandwidth: u64
+      storage: u64
+      observables: u64
+      proofs: u64
+      circuits: u64
+      mpc_sessions: u64
+
+  TierLimits:
+    struct:
+      tier_name: string
+      limits: DimensionValues
+
+  MeteringRecord:
+    struct:
+      user_id: bytes(16)
+      operation: string
+      dimensions: DimensionValues
+      timestamp_ms: u64

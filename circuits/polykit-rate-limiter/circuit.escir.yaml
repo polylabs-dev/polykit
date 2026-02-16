@@ -1,0 +1,39 @@
+escir: "0.8.1"
+name: polykit-rate-limiter
+version: "0.1.0"
+lex: polykit.ratelimit
+target: wasm-client
+description: >
+  FIFO rate limiter with backpressure. Reusable by all Poly apps.
+  Per-tier rate limiting based on metering dimensions.
+
+stream_pattern: state
+
+exports:
+  - fn: check_rate
+    desc: "Check if an operation is within rate limits"
+    params:
+      - name: user_id
+        type: bytes(16)
+      - name: operation
+        type: string
+      - name: tier
+        type: string
+    returns: RateCheckResult
+
+  - fn: record_operation
+    desc: "Record an operation against rate limits"
+    params:
+      - name: user_id
+        type: bytes(16)
+      - name: operation
+        type: string
+    returns: void
+
+types:
+  RateCheckResult:
+    struct:
+      allowed: bool
+      remaining: u64
+      reset_at_ms: u64
+      retry_after_ms: u64

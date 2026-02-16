@@ -1,0 +1,12 @@
+[package]
+name = "polykit-eslite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ESLite client: schema migrations, query engine, snapshot+delta sync — all in WASM"
+
+[dependencies]
+eslite = { workspace = true }
+polykit-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
