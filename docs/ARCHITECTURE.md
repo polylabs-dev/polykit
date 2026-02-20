@@ -23,7 +23,9 @@ Every Poly product is cryptographically and observationally isolated from every 
 - **Metering isolation**: Each product meters independently under its own `user_id`. PolyKit provides the metering _circuit_ but each app instantiates its own metering _graph_ in its own lex.
 - **Billing isolation**: Subscription system uses blinded payment tokens. The billing backend cannot correlate which SPARK identity uses which products.
 
-**Enterprise exception**: Enterprise admins can opt-in to cross-product visibility via an explicit lex bridge, gated by k-of-n admin witness attestation. The bridge is revocable. Even bridged, only org-level aggregates and RBAC policy flow across products -- individual user-level data is not cross-linked.
+**Individual opt-in**: Users can choose to link their products for a personal unified dashboard. The bridge is client-side only (WASM + ESLite) — no server learns about the linkage. Derived from `HKDF("poly-bridge-v1")`, revocable, content-free, zero subpoena surface.
+
+**Enterprise opt-in**: Enterprise admins can enable org-level cross-product visibility via a lex bridge gated by k-of-n admin witness attestation. The bridge is revocable. Even bridged, only org-level aggregates and RBAC policy flow across products — individual user-level data is not cross-linked.
 
 ### 3. Compose Upstream, Don't Reinvent
 
@@ -343,7 +345,9 @@ esn/global/org/polylabs                          <- Global org lex (aggregates)
 
 **Zero-linkage enforcement**: Each product's lex subtree (`esn/.../polylabs/data`, `esn/.../polylabs/messenger`, etc.) is completely isolated. The global org lex receives only anonymized compliance metrics -- never user IDs, never product-usage correlation. Raw PII stays within regional sub-lexes.
 
-**Enterprise bridge**: When an enterprise admin opts in, a `lex_bridge` is established between product sub-lexes, gated by k-of-n admin witness attestation. The bridge allows org-level aggregates and RBAC policy to flow across products. Individual user-level data remains per-product.
+**Personal bridge**: Individual users can opt in to a client-side-only `lex_bridge` (scope: `personal`) that links their product identities for a unified dashboard. The linkage proof is derived from `HKDF("poly-bridge-v1")`, stored in local ESLite only, never sent to any server. Revocable by deleting the bridge key material. No subpoena surface — nothing exists on any backend.
+
+**Enterprise bridge**: Enterprise admins can opt in to an org-level `lex_bridge` (scope: `organization`) between product sub-lexes, gated by k-of-n admin witness attestation. The bridge allows org-level aggregates and RBAC policy to flow across products. Individual user-level data remains per-product.
 
 ---
 
