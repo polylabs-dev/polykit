@@ -464,9 +464,9 @@ wire:
     - pattern: "{app}.{user_id}.upload"
       type: event
       description: "Incoming file upload requests"
-    - pattern: "lex://estream/apps/{app}/eslm/classification"
+    - pattern: "lex://estream/apps/{app}/li/classification"
       type: signal
-      description: "ESLM classification suggestions"
+      description: "LI Effects (Learned Intelligence) classification suggestions"
   emits:
     - pattern: "lex://estream/apps/{app}/telemetry"
       type: signal

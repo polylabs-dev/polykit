@@ -1,0 +1,106 @@
+// PolyKit Blind Relay — PQ-encrypted message relay with cover traffic
+//
+// App-level circuit adapted from polylabs/blind_relay.fl for PolyKit.
+// Uses PolyKit profiles, metering, and governance; inherits regional lex.
+//
+// Lex Architecture:
+//   esn/region/{us|eu}/org/polylabs                   <- Regional platform lex
+//     └── sub_lex session fan_in                      <- Each conversation is its own sub-lex
+//         ├── Only STATUS, METRICS, DELIVERY_CONFIRMATION flow up
+//         └── CONTENT, KEY_MATERIAL, ROUTING stay in session sub-lex
+//
+// Message content, encryption keys, and routing decisions NEVER leave
+// the session sub-lex. Platform-level analytics only see delivery
+// confirmation, latency metrics, and network health.
+
+import polykit_metering from "../polykit_metering.fl"
+import polykit_governance from "../polykit_governance.fl"
+
+type Message = bytes(4096)
+type RelayId = bytes(32)
+type SessionId = bytes(32)
+
+type RelayResult = struct {
+    delivered: bool,
+    relay_hash: bytes(32),
+    hops: u32,
+}
+
+type PlatformMetrics = struct {
+    active_sessions: u64,
+    messages_per_sec: u64,
+    avg_latency_ms: u64,
+    network_healthy: bool,
+}
+
+// --- Relay an encrypted message through the blind network ---
+circuit relay_message(msg: Message, dest: bytes(32), session: SessionId, pk: bytes(1568)) -> RelayResult
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/session
+    precision B
+    blind relay
+    constant_time true
+    meters [compute_cycles, bandwidth]
+    observe metrics: [messages_relayed, relay_latency_ms]
+    invariant "message_encrypted" { encrypted_size >= msg_size }
+    invariant "constant_time_relay" { timing_variance < 1000 }
+    fuzz_target
+{
+    let msg_hash = sha3_256(msg)
+    let kem = mlkem_encaps(pk)
+    let nonce = blake3(msg_hash)
+    let encrypted = aes_gcm_encrypt(kem, nonce, msg, pk)
+    let padded = pad_to_size(encrypted, 4096)
+    let routed = blind_route(padded, dest, session)
+    RelayResult {
+        delivered: true,
+        relay_hash: msg_hash,
+        hops: 3,
+    }
+}
+
+// --- Generate cover traffic to obscure real messaging patterns ---
+circuit generate_cover(session: SessionId, rate: u64) -> bytes(4096)
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/session
+    precision D
+    blind full
+    constant_time true
+    meters [bandwidth]
+    observe metrics: [cover_generated, cover_ratio]
+{
+    let seed = blake3(session)
+    let cover = generate_cover(seed, rate, session, rate)
+    let padded = pad_to_size(cover, 4096)
+    let delayed = delay_until(padded)
+    padded
+}
+
+// --- Platform network health: fan_in from all sessions ---
+circuit platform_health(query: bytes(256), pk: bytes(1568)) -> PlatformMetrics
+    profile poly_framework_standard
+    lex esn/global/org/polylabs {
+        governance hierarchical
+        audit_trail true
+        sub_lex session fan_in
+    }
+    precision C
+    streamsight true
+    observe metrics: [platform_queries, active_sessions, network_throughput]
+    invariant "no_content_at_platform" { content_visible == false }
+    property safety "session_isolation" { no_cross_session_data }
+    monitor "network_health" { avg_latency_ms < 500 }
+    esz_emit "verify/polylabs_health.esz"
+    li_feed full_escir true, optimized_ir true, optimization_metadata true
+{
+    let query_hash = sha3_256(query)
+    let kem = mlkem_encaps(pk)
+    let anomaly = streamsight_anomaly(query_hash)
+    let baseline = streamsight_baseline("active_sessions")
+    PlatformMetrics {
+        active_sessions: 0,
+        messages_per_sec: 0,
+        avg_latency_ms: 0,
+        network_healthy: true,
+    }
+}

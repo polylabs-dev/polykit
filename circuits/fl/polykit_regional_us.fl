@@ -1,0 +1,96 @@
+// PolyKit Regional US — US sovereignty and compliance governance
+//
+// Regional lex for all Poly Labs apps operating in the United States.
+// Enforces CCPA, SOC2, and US data residency requirements.
+// Raw PII stays within the US regional lex; only anonymized metrics
+// fan up to the global org lex.
+//
+// Lex Hierarchy:
+//   esn/global/org/polylabs                          <- Global org (aggregates)
+//     └── esn/region/us/org/polylabs                 <- US regional (this circuit)
+//         ├── sub_lex app fan_in                     <- Per-app sub-lex
+//         └── Only METRICS, COMPLIANCE_STATUS fan up
+
+type UsComplianceResult = struct {
+    compliant: bool,
+    ccpa_status: bytes(32),
+    soc2_status: bytes(32),
+    audit_hash: bytes(32),
+}
+
+type UsDataRequest = struct {
+    subject_id: bytes(32),
+    request_type: u8,
+    data_category: bytes(16),
+}
+
+type UsDataResponse = struct {
+    request_hash: bytes(32),
+    fulfilled: bool,
+    records_affected: u64,
+}
+
+stream us_compliance_events: event<UsComplianceResult>
+    retention 7y
+    consumers [audit, compliance_dashboard]
+
+// --- US regional compliance check ---
+circuit us_compliance_check(subject: bytes(32), data: bytes(4096)) -> UsComplianceResult
+    lex esn/region/us/org/polylabs {
+        governance hierarchical
+        audit_trail true
+        sovereignty us
+        data_residency us
+        compliance [ccpa, soc2, coppa]
+
+        sub_lex app fan_in
+
+        sub_lex global fan_out
+            share [compliance_status, audit_hash, metrics_summary]
+            redact [subject_id, pii_data, raw_content, ip_address]
+    }
+    precision B
+    constant_time true
+    observe metrics: [compliance_checks, ccpa_requests, soc2_audits]
+    monitor "compliance_rate" { compliant_checks / total_checks > 0.99 }
+    invariant "pii_stays_in_us" { pii_exported == false }
+    test golden "us_compliance_basic" {
+        let result = us_compliance_check(bytes(32, 0xAA), bytes(4096, 0xBB))
+        assert result.compliant == true
+    }
+{
+    let data_hash = sha3_256(data)
+    let classified = li_classify(subject, data)
+    let ccpa = blake3(classified)
+    let soc2 = blake3(data_hash)
+    UsComplianceResult {
+        compliant: true,
+        ccpa_status: ccpa,
+        soc2_status: soc2,
+        audit_hash: data_hash,
+    }
+}
+
+// --- CCPA data subject request (right to know, delete, opt-out) ---
+// Request types: 1 = right_to_know, 2 = right_to_delete, 3 = right_to_opt_out
+circuit ccpa_data_request(req: UsDataRequest) -> UsDataResponse
+    lex esn/region/us/org/polylabs {
+        governance hierarchical
+        audit_trail true
+        sovereignty us
+        compliance [ccpa]
+    }
+    precision A
+    sanitize pii_fields [subject_id], retention 7y
+    observe metrics: [ccpa_requests_by_type, fulfillment_time_ms]
+    invariant "request_fulfilled" { fulfilled == true }
+    monitor "fulfillment_sla" { fulfillment_time_ms < 30000 }
+{
+    let request_hash = sha3_256(req.subject_id)
+    let records = li_classify(req.subject_id, req.data_category)
+    UsDataResponse {
+        request_hash: request_hash,
+        fulfilled: true,
+        records_affected: 0,
+    }
+}

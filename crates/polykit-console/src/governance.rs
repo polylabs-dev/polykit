@@ -1,21 +1,22 @@
-//! ESLM governance data processors
+//! LI Effects governance data processors
 //!
 //! Generic processors for the 4 reusable governance widgets.
 //! Parameterized by lex namespace.
+//! LI = Learned Intelligence
 
 use serde::{Deserialize, Serialize};
 use crate::event_bus::PolykitEvent;
 use crate::widget_data::{WidgetProcessor, WidgetPayload};
 
-/// ESLM review queue processor.
-/// Subscribes to: {namespace}/eslm/classification
-pub struct EslmReviewQueueProcessor {
+/// LI Effects review queue processor.
+/// Subscribes to: {namespace}/li/classification
+pub struct LiReviewQueueProcessor {
     pub app: String,
     pub namespace: String,
 }
 
-impl WidgetProcessor for EslmReviewQueueProcessor {
-    fn widget_type(&self) -> &str { "polykit-eslm-review-queue" }
+impl WidgetProcessor for LiReviewQueueProcessor {
+    fn widget_type(&self) -> &str { "polykit-li-review-queue" }
 
     fn process(
         &mut self,
@@ -32,7 +33,7 @@ impl WidgetProcessor for EslmReviewQueueProcessor {
         }
 
         WidgetPayload {
-            widget_id: format!("{}-eslm-review-queue", self.app),
+            widget_id: format!("{}-li-review-queue", self.app),
             data,
             dirty: true,
         }
@@ -40,7 +41,7 @@ impl WidgetProcessor for EslmReviewQueueProcessor {
 }
 
 /// Sanitization log processor.
-/// Subscribes to: {namespace}/eslm/sanitization
+/// Subscribes to: {namespace}/li/sanitization
 pub struct SanitizationLogProcessor {
     pub app: String,
     pub namespace: String,
@@ -70,15 +71,15 @@ impl WidgetProcessor for SanitizationLogProcessor {
     }
 }
 
-/// ESLM feedback dashboard processor.
-/// Subscribes to: {namespace}/eslm/classification
-pub struct EslmFeedbackProcessor {
+/// LI Effects feedback dashboard processor.
+/// Subscribes to: {namespace}/li/classification
+pub struct LiFeedbackProcessor {
     pub app: String,
     pub namespace: String,
 }
 
-impl WidgetProcessor for EslmFeedbackProcessor {
-    fn widget_type(&self) -> &str { "polykit-eslm-feedback" }
+impl WidgetProcessor for LiFeedbackProcessor {
+    fn widget_type(&self) -> &str { "polykit-li-feedback" }
 
     fn process(
         &mut self,
@@ -97,7 +98,7 @@ impl WidgetProcessor for EslmFeedbackProcessor {
         }
 
         WidgetPayload {
-            widget_id: format!("{}-eslm-feedback", self.app),
+            widget_id: format!("{}-li-feedback", self.app),
             data,
             dirty: true,
         }
@@ -105,7 +106,7 @@ impl WidgetProcessor for EslmFeedbackProcessor {
 }
 
 /// ESN-AI recommendations processor.
-/// Subscribes to: {namespace}/eslm/recommendation
+/// Subscribes to: {namespace}/li/recommendation
 pub struct EsnAiRecommendationsProcessor {
     pub app: String,
     pub namespace: String,

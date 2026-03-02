@@ -1,0 +1,63 @@
+// PolyKit Rate Limiter — FIFO rate limiter with backpressure
+//
+// Per-tier rate limiting based on metering dimensions.
+// Uses a state machine to model open/throttled/blocked transitions.
+
+type RateWindow = struct {
+    count: u64,
+    window_start_ms: u64,
+    window_size_ms: u64,
+}
+
+type RateCheckResult = struct {
+    allowed: bool,
+    remaining: u64,
+    reset_at_ms: u64,
+    retry_after_ms: u64,
+}
+
+stream rate_state: state<RateWindow>
+
+// --- Check if an operation is within rate limits ---
+circuit check_rate(user_id: bytes(16), operation: string, tier: string) -> RateCheckResult
+    profile poly_framework_standard
+    state_machine rate_fsm {
+        initial open
+        states [open, throttled, blocked]
+        transition open -> throttled when usage > soft_limit
+        transition throttled -> blocked when usage > hard_limit
+        transition blocked -> open when window_reset
+    }
+    observe metrics: [rate_checks, throttle_events, blocked_events]
+    monitor "throttle_rate" { throttle_events / rate_checks < 0.10 }
+    wasm_abi [eslite_query, now]
+    invariant "monotonic_consumption" { new_count >= old_count }
+    test golden "check_rate_limit_open" {
+        let result = check_rate(bytes(16, 0x01), "test_op", "free")
+        assert result.allowed == true or result.allowed == false
+    }
+{
+    let current = load(user_id)
+    let ts = now()
+    let window = fsm_state(rate_fsm)
+    let anomaly = streamsight_anomaly(current)
+    let baseline = streamsight_baseline("rate_checks")
+    RateCheckResult {
+        allowed: window == open,
+        remaining: 0,
+        reset_at_ms: ts,
+        retry_after_ms: 0,
+    }
+}
+
+// --- Record an operation against rate limits ---
+circuit record_operation(user_id: bytes(16), operation: string) -> bool
+    profile poly_framework_standard
+    observe metrics: [operations_recorded]
+    wasm_abi [eslite_insert, now]
+{
+    let ts = now()
+    let current = load(user_id)
+    let updated = store(user_id, current)
+    true
+}

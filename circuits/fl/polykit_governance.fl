@@ -1,0 +1,82 @@
+// PolyKit Governance — field-level visibility control with filtered fan-out
+//
+// Shared field governance primitive for all Poly Labs apps.
+// 2 bits per field per audience, FPGA wire-speed enforcement.
+//
+// Audience hierarchy: public ⊂ internal ⊂ privileged
+// Each audience sees an expanding set of fields.
+// Fan-out filters downstream dissemination per sub-lex.
+
+audience public { fields [summary, status, timestamp] }
+audience internal inherits public { fields [details, assignee, priority] }
+audience privileged inherits internal { fields [pii_data, raw_content], hide [internal_notes] }
+
+type GovernedRecord = struct {
+    summary: string,
+    status: string,
+    timestamp: u64,
+    details: bytes(1024),
+    assignee: bytes(32),
+    priority: u8,
+    pii_data: bytes(512),
+    raw_content: bytes(4096),
+    internal_notes: bytes(1024),
+}
+
+type GovernedResult = struct {
+    record_hash: bytes(32),
+    classification: bytes(32),
+    fields_redacted: u32,
+}
+
+// --- Emit a record with field-level governance ---
+circuit governed_emit(record: GovernedRecord, classification: string) -> GovernedResult
+    profile poly_framework_standard
+    lex esn/global/org/polylabs {
+        governance hierarchical
+        audit_trail true
+
+        sub_lex region_us fan_in
+        sub_lex region_eu fan_in
+
+        sub_lex app fan_out share [summary, status] redact [pii_data, raw_content]
+    }
+    field_governance {
+        summary: public,
+        status: public,
+        timestamp: public,
+        details: encrypted(audience: internal),
+        assignee: encrypted(audience: internal),
+        priority: encrypted(audience: internal),
+        pii_data: hidden(audience: privileged),
+        raw_content: redacted,
+        internal_notes: redacted,
+    }
+    observe metrics: [governed_emissions, field_redactions, audience_checks]
+    monitor "redaction_coverage" { field_redactions > 0 }
+    invariant "no_pii_at_public" { pii_visible_to_public == false }
+    property safety "classification_monotonic" { output_level >= input_level }
+    test golden "governed_emit_basic" {
+        let record = GovernedRecord { summary: "test", status: "active", timestamp: 1000, details: bytes(1024, 0x00), assignee: bytes(32, 0xAA), priority: 1, pii_data: bytes(512, 0x00), raw_content: bytes(4096, 0x00), internal_notes: bytes(1024, 0x00) }
+        let result = governed_emit(record, "internal")
+        assert result.fields_redacted == 3
+    }
+{
+    let record_hash = sha3_256(record)
+    let classified = li_classify(record, classification)
+    GovernedResult {
+        record_hash: record_hash,
+        classification: classified,
+        fields_redacted: 3,
+    }
+}
+
+// --- Check audience visibility for a specific field ---
+circuit check_field_visibility(field_name: string, audience_level: string) -> bool
+    profile poly_framework_standard
+    observe metrics: [visibility_checks]
+{
+    let policy = lex_policy_lookup(field_name)
+    let allowed = li_classify(field_name, audience_level)
+    allowed != null
+}

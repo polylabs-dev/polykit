@@ -1,0 +1,76 @@
+// PolyKit Sanitize — 3-stage compliance sanitization pipeline
+//
+// Stage 1: PII detection (SSN, PAN, names, emails, medical records)
+// Stage 2: Value transform (redaction, abstraction, masking)
+// Stage 3: PoVC-witnessed audit record
+//
+// Compliance: HIPAA, PCI-DSS, GDPR, SOC2, CCPA
+
+type DataType = enum {
+    Ssn,
+    CreditCard,
+    PersonalName,
+    Email,
+    PhoneNumber,
+    DateOfBirth,
+    Address,
+    MedicalRecord,
+    FinancialAccount,
+    BiometricData,
+}
+
+type Regulation = enum { Hipaa, PciDss, Gdpr, Soc2, Ccpa }
+type Stage = enum { PiiDetect, ValueTransform, AuditRecord }
+
+type Detection = struct {
+    field_path: string,
+    data_type: DataType,
+    regulation: [Regulation; 5],
+    confidence: u64,
+}
+
+type AuditEntry = struct {
+    timestamp_ms: u64,
+    stage: Stage,
+    field_path: string,
+    original_type: string,
+    placeholder: string,
+    regulations: [string; 5],
+    witness_hash: bytes(32),
+}
+
+type SanitizationResult = struct {
+    sanitized_data: bytes,
+    audit_entries: [AuditEntry; 32],
+}
+
+// --- Run full 3-stage pipeline on input data ---
+circuit sanitize(input: bytes) -> SanitizationResult
+    profile poly_framework_sensitive
+    sanitize pii_fields [input], retention 7y, compliance [hipaa, pci_dss, gdpr, soc2]
+    observe metrics: [sanitization_runs, pii_detections, transform_ops]
+    monitor "pii_leak_rate" { pii_in_output == 0 }
+    witness full
+    invariant "no_pii_in_output" { pii_count(sanitized_data) == 0 }
+    invariant "audit_complete" { len(audit_entries) >= detections }
+    esz_emit "verify/polykit_sanitize.esz"
+    li_feed full_escir true, optimized_ir true
+    test golden "sanitize_pii_input" {
+        let input = bytes(64, 0xAA)
+        let result = sanitize(input)
+        assert len(result.sanitized_data) > 0
+    }
+{
+    let detections = li_classify(input, "pii_scan")
+    let transformed = transform_detected(input, detections)
+    let audit = generate_audit(detections)
+    SanitizationResult { sanitized_data: transformed, audit_entries: audit }
+}
+
+// --- Stage 1 only: detect PII without transforming ---
+circuit detect_only(input: bytes) -> [Detection; 32]
+    profile poly_framework_standard
+    observe metrics: [detection_only_runs, detections_found]
+{
+    li_classify(input, "pii_scan")
+}

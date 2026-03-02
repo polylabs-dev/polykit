@@ -1,0 +1,30 @@
+// PolyKit Shared Annotation Profiles
+//
+// Applied to all PolyKit circuits via `profile poly_framework_standard`
+// or `profile poly_framework_sensitive` (for crypto/PII circuits).
+//
+// Profiles consolidate 5-7 repeated annotations into a single line.
+// The compiler resolves profiles at parse time before codegen.
+
+amplify enterprise {
+    families [lattice, code],
+    rounds 2,
+}
+
+profile poly_framework_standard {
+    lex esn/global/org/polylabs
+    precision C
+    budget wasm_bytes 64KB, memory_pages 32, instantiation_ms 25
+    meters [compute_cycles, memory_bytes, crypto_ops, bandwidth_bytes]
+    observe metrics: [circuit_invocations, latency_p99_ms]
+    streamsight emit
+    rbac [user, operator, admin]
+    offline mode queue, sync eventual, max_offline 24h
+    wasm_abi [eslite_query, eslite_insert, stream_emit, stream_subscribe]
+}
+
+profile poly_framework_sensitive inherits poly_framework_standard {
+    constant_time true
+    sanitize pii_fields [], retention 7y
+    witness threshold(3, 5)
+}

@@ -1,0 +1,44 @@
+// PolyKit Platform Composition
+//
+// Connects all PolyKit circuits into a unified framework.
+// Apps import this platform to get the full PolyKit capability set.
+
+platform polykit_framework v1 {
+    import polykit_identity from "./polykit_identity.fl"
+    import polykit_metering from "./polykit_metering.fl"
+    import polykit_rate_limiter from "./polykit_rate_limiter.fl"
+    import polykit_sanitize from "./polykit_sanitize.fl"
+    import polykit_li_effects from "./polykit_li_effects.fl"
+    import polykit_delta_curate from "./polykit_delta_curate.fl"
+    import polykit_governance from "./polykit_governance.fl"
+    import polykit_blind_telemetry from "./polykit_blind_telemetry.fl"
+
+    import polykit_regional_us from "./polykit_regional_us.fl"
+    import polykit_regional_eu from "./polykit_regional_eu.fl"
+
+    import polykit_media_stream from "./apps/polykit_media_stream.fl"
+    import polykit_crdt_sync from "./apps/polykit_crdt_sync.fl"
+    import polykit_blind_relay from "./apps/polykit_blind_relay.fl"
+    import polykit_classified_fusion from "./apps/polykit_classified_fusion.fl"
+
+    group core [polykit_identity, polykit_metering, polykit_rate_limiter, polykit_blind_telemetry]
+    group compliance [polykit_sanitize, polykit_governance]
+    group intelligence [polykit_li_effects, polykit_delta_curate]
+    group regional [polykit_regional_us, polykit_regional_eu]
+    group apps [polykit_media_stream, polykit_crdt_sync, polykit_blind_relay, polykit_classified_fusion]
+
+    connect polykit_identity -> polykit_metering
+    connect polykit_metering -> polykit_rate_limiter
+    connect polykit_sanitize -> polykit_governance
+    connect polykit_governance -> polykit_regional_us
+    connect polykit_governance -> polykit_regional_eu
+
+    bind polykit_li_effects -> li_engine
+
+    streamsight true
+    esz_emit "verify/polykit_platform.esz"
+    li_feed full_escir true, optimized_ir true
+
+    target wasm_client
+    target alpha_devnet
+}

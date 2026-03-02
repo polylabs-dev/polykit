@@ -1,0 +1,116 @@
+// PolyKit Identity — SPARK authentication and PQ key derivation
+//
+// Lex Architecture:
+//   esn/global/org/polylabs/identity
+//   Per-app ML-DSA-87 signing and ML-KEM-1024 encryption keys
+//   derived from SPARK master seed via HKDF-SHA3-256.
+//
+// Key hierarchy:
+//   SPARK master_seed
+//     └── HKDF-SHA3-256(master_seed, "{app-context}")
+//           ├── ML-DSA-87 signing key pair (FIPS 204, Level 5)
+//           └── ML-KEM-1024 encryption key pair (FIPS 203, Level 5)
+
+type MasterSeed = bytes(32)
+type UserId = bytes(16)
+
+type DerivedKeys = struct {
+    user_id: UserId,
+    signing_public_key: bytes(2592),
+    signing_secret_key: bytes(4896),
+    encryption_public_key: bytes(1568),
+    encryption_secret_key: bytes(3168),
+}
+
+type EncapsulatedKey = struct {
+    ciphertext: bytes(1568),
+    shared_secret: bytes(32),
+}
+
+// --- Derive user identity from SPARK master seed ---
+circuit derive_keys(master_seed: MasterSeed, hkdf_context: bytes(64)) -> DerivedKeys
+    profile poly_framework_sensitive
+    lex esn/global/org/polylabs/identity
+    constant_time true
+    observe metrics: [key_derivations, hkdf_ops, signing_key_generations]
+    monitor "derivation_latency" { derivation_time_ms < 50 }
+    invariant "seed_minimum_entropy" { len(master_seed) >= 32 }
+    invariant "key_isolation" { signing_seed != encryption_seed }
+    kat_vector "spark_derivation_v1" {
+        input master_seed = 0x[0000000000000000000000000000000000000000000000000000000000000001]
+        input hkdf_context = 0x[706f6c792d646174612d7631]
+        expect user_id != 0x[00000000000000000000000000000000]
+    }
+    test golden "derive_identity_keys" {
+        let seed = bytes(32, 0x01)
+        let ctx = bytes(64, 0xAA)
+        let keys = derive_keys(seed, ctx)
+        assert len(keys.user_id) == 16
+        assert len(keys.signing_public_key) == 2592
+        assert len(keys.signing_secret_key) == 4896
+    }
+{
+    let derived = hkdf_sha3(master_seed, hkdf_context, 64)
+    let signing_seed = bit_slice(derived, 0, 256)
+    let encryption_seed = bit_slice(derived, 256, 512)
+    let (signing_pk, signing_sk) = mldsa_sign(signing_seed)
+    let (enc_pk, enc_sk) = mlkem_encaps(encryption_seed)
+    let pk_hash = sha3_256(signing_pk)
+    let user_id = bit_slice(pk_hash, 0, 128)
+    DerivedKeys {
+        user_id: user_id,
+        signing_public_key: signing_pk,
+        signing_secret_key: signing_sk,
+        encryption_public_key: enc_pk,
+        encryption_secret_key: enc_sk,
+    }
+}
+
+// --- Sign data with ML-DSA-87 ---
+circuit sign_message(secret_key: bytes(4896), message: bytes) -> bytes(4627)
+    profile poly_framework_sensitive
+    constant_time true
+    observe metrics: [sign_ops]
+    invariant "signature_deterministic" { sign(sk, msg) == sign(sk, msg) }
+{
+    mldsa_sign(secret_key, message)
+}
+
+// --- Verify ML-DSA-87 signature ---
+circuit verify_signature(public_key: bytes(2592), message: bytes, signature: bytes(4627)) -> bool
+    profile poly_framework_standard
+    observe metrics: [verify_ops, verify_failures]
+{
+    mldsa_verify(message, signature, public_key)
+}
+
+// --- ML-KEM-1024 key encapsulation ---
+circuit encapsulate_key(recipient_pk: bytes(1568)) -> EncapsulatedKey
+    profile poly_framework_sensitive
+    constant_time true
+    observe metrics: [encapsulation_ops]
+{
+    let kem = mlkem_encaps(recipient_pk)
+    EncapsulatedKey {
+        ciphertext: kem,
+        shared_secret: blake3(kem),
+    }
+}
+
+// --- ML-KEM-1024 key decapsulation ---
+circuit decapsulate_key(secret_key: bytes(3168), ciphertext: bytes(1568)) -> bytes(32)
+    profile poly_framework_sensitive
+    constant_time true
+    observe metrics: [decapsulation_ops]
+{
+    mlkem_decaps(secret_key, ciphertext)
+}
+
+// --- Compute user_id from public key ---
+circuit derive_user_id(signing_public_key: bytes(2592)) -> UserId
+    profile poly_framework_standard
+    observe metrics: [user_id_derivations]
+{
+    let pk_hash = sha3_256(signing_public_key)
+    bit_slice(pk_hash, 0, 128)
+}

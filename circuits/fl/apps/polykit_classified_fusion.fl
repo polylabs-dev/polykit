@@ -1,0 +1,94 @@
+// PolyKit Classified Fusion — SCI-level omniscient data fusion
+//
+// App-level circuit adapted from polylabs/classified_fusion.fl for PolyKit.
+// Uses PolyKit profiles and governance; demonstrates full lex hierarchy
+// with fan-in, Learned Intelligence, and StreamSight.
+//
+// From FASTLANG_SPEC.md §11.5: Classified Stream Visibility
+
+import polykit_governance from "../polykit_governance.fl"
+import polykit_li_effects from "../polykit_li_effects.fl"
+
+type FusionQuery = bytes(4096)
+type Corpus = bytes(32)
+
+type FusionResult = struct {
+    analysis: bytes(8192),
+    classification: bytes(32),
+    anomaly_detected: bool,
+}
+
+// --- SCI Omniscient Circuit: Full Visibility via Fan-In + LI + StreamSight ---
+circuit sci_omniscient(query: FusionQuery, corpus: Corpus, pk: bytes(1568)) -> FusionResult
+    profile poly_framework_standard
+    lex esn/gov/dod/sci/org/nsa {
+        governance hierarchical
+        approval_required true
+        audit_trail true
+        sovereignty us
+        data_residency us_gov_cloud
+        compliance [itar, nist_800_171, fips_140_3, cnss_1253]
+
+        sub_lex unclassified fan_in
+        sub_lex cui fan_in
+        sub_lex secret fan_in
+        sub_lex top_secret fan_in
+    }
+    precision A
+    hardware_required true
+    streamsight true
+    meters [compute_cycles, hashes, proofs]
+    observe metrics: [fusion_ops, li_queries, anomaly_detections]
+    invariant "classification_monotonic" { output_level >= max(input_levels) }
+    invariant "anomaly_detection_active" { anomaly_detected != null }
+    property safety "no_downgrade" { classification_level_never_decreases }
+    monitor "fusion_latency" { fusion_time_ms < 10000 }
+    critical_path
+    esz_emit "verify/classified_fusion.esz"
+    li_feed full_escir true, optimized_ir true, optimization_metadata true
+    test golden "sci_omniscient_basic" {
+        let result = sci_omniscient(bytes(4096, 0xAA), bytes(32, 0xBB), bytes(1568, 0xCC))
+        assert result.anomaly_detected == true
+    }
+{
+    let kem = mlkem_encaps(pk)
+    let classification = li_classify(corpus, query)
+    let analysis = li_infer(corpus, query)
+    let anomaly = streamsight_anomaly(analysis)
+    let baseline = streamsight_baseline("fusion_ops")
+    let embedding = li_embed(corpus, query)
+    FusionResult {
+        analysis: analysis,
+        classification: classification,
+        anomaly_detected: true,
+    }
+}
+
+// --- Unclassified data ingestion ---
+circuit unclass_ingest(data: bytes(4096), pk: bytes(1568)) -> bytes(32)
+    profile poly_framework_standard
+    lex esn/gov/dod/unclassified/org/nsa
+    precision C
+    meters [compute_cycles, hashes]
+    invariant "data_hashed" { hash != null }
+{
+    let hash = sha3_256(data)
+    let kem = mlkem_encaps(pk)
+    hash
+}
+
+// --- CUI aggregation circuit ---
+circuit cui_aggregate(records: bytes(4096), pk: bytes(1568)) -> bytes(32)
+    profile poly_framework_standard
+    lex esn/gov/dod/cui/org/nsa
+    precision B
+    meters [compute_cycles, hashes]
+    sanitize pii_fields [records], retention 7y
+    invariant "pii_sanitized" { pii_in_output == false }
+    invariant "classification_labeled" { classified != null }
+{
+    let hash = sha3_256(records)
+    let kem = mlkem_encaps(pk)
+    let classified = li_classify(records, hash)
+    hash
+}

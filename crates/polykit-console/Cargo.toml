@@ -3,7 +3,7 @@ name = "polykit-console"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Console widget data pipeline: event bus, RBAC, demo fixtures, StreamSight/ESLM processors — WASM-native"
+description = "Console widget data pipeline: event bus, RBAC, demo fixtures, StreamSight/LI Effects processors — WASM-native"
 
 [dependencies]
 polykit-core = { workspace = true }

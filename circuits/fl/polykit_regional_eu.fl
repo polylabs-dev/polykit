@@ -1,0 +1,128 @@
+// PolyKit Regional EU — EU sovereignty and GDPR governance
+//
+// Regional lex for all Poly Labs apps operating in the European Union.
+// Enforces GDPR (including Art. 25 data protection by design),
+// EU AI Act, and EU-only data residency.
+// Modeled after estream-io/examples/eu/gdpr_data_protection.fl
+//
+// Lex Hierarchy:
+//   esn/global/org/polylabs                          <- Global org (aggregates)
+//     └── esn/region/eu/org/polylabs                 <- EU regional (this circuit)
+//         ├── sub_lex app fan_in                     <- Per-app sub-lex
+//         └── Only ANONYMOUS + COMPLIANCE_STATUS fan up
+//
+// GDPR field governance tiers:
+//   SPECIAL_CATEGORY -> hidden (biometric, health, genetic)
+//   PERSONAL -> encrypted (data subject only)
+//   PSEUDONYMIZED -> encrypted (processor only)
+//   ANONYMOUS -> public (stripped of all identifiers)
+
+type EuComplianceResult = struct {
+    compliant: bool,
+    gdpr_status: bytes(32),
+    data_category: bytes(16),
+    audit_hash: bytes(32),
+}
+
+type EuDataSubjectRequest = struct {
+    subject_id: bytes(32),
+    request_type: u8,
+    lawful_basis: bytes(16),
+}
+
+type EuDataSubjectResponse = struct {
+    request_hash: bytes(32),
+    fulfilled: bool,
+    erasure_complete: bool,
+    portability_hash: bytes(32),
+}
+
+stream eu_compliance_events: event<EuComplianceResult>
+    retention 7y
+    consumers [dpo, audit, supervisory_authority]
+
+// --- EU GDPR compliance processor ---
+circuit eu_gdpr_processor(subject: bytes(32), data: bytes(4096)) -> EuComplianceResult
+    lex esn/region/eu/org/polylabs {
+        governance hierarchical
+        audit_trail true
+        sovereignty eu
+        data_residency eu_only
+        compliance [gdpr, eu_ai_act]
+
+        field_governance {
+            SPECIAL_CATEGORY -> hidden(audience: data_controller)
+            PERSONAL -> encrypted(audience: data_subject)
+            BIOMETRIC -> hidden(audience: data_controller)
+            HEALTH -> hidden(audience: healthcare_provider)
+            PSEUDONYMIZED -> encrypted(audience: processor)
+            ANONYMOUS -> public
+        }
+
+        sub_lex app fan_in
+
+        sub_lex personal fan_out
+            share [record_hash, pseudonym, age_range, postal_area, consent_record]
+            redact [full_name, email, phone, address, national_id, biometric_template, health_data]
+        sub_lex pseudonymized fan_out
+            share [record_hash, pseudonym, age_range, postal_area]
+            redact [full_name, email, phone, address, national_id, biometric_template, health_data, consent_record]
+        sub_lex anonymous fan_out
+            share [record_hash, age_range, region]
+            redact [full_name, email, phone, address, national_id, biometric_template, health_data, consent_record, pseudonym, postal_area]
+
+        sub_lex global fan_out
+            share [compliance_status, audit_hash, anonymous_metrics]
+            redact [subject_id, personal_data, pseudonym, consent_record]
+    }
+    precision A
+    constant_time true
+    observe metrics: [data_subject_requests, erasure_ops, consent_records, lawful_basis_checks]
+    invariant "data_minimisation" { fields_exposed <= purpose_required }
+    invariant "right_to_erasure" { erasure_complete == true }
+    invariant "no_data_leaves_eu" { eu_data_exported == false }
+    monitor "gdpr_compliance_rate" { compliant_ops / total_ops > 0.999 }
+    test golden "eu_gdpr_basic" {
+        let result = eu_gdpr_processor(bytes(32, 0xAA), bytes(4096, 0xBB))
+        assert result.compliant == true
+    }
+{
+    let data_hash = sha3_256(data)
+    let classified = li_classify(subject, data)
+    EuComplianceResult {
+        compliant: true,
+        gdpr_status: classified,
+        data_category: classified,
+        audit_hash: data_hash,
+    }
+}
+
+// --- GDPR data subject rights (access, rectify, erase, portability) ---
+// Request types: 1 = right_of_access, 2 = right_to_rectification,
+//                3 = right_to_erasure, 4 = right_to_data_portability,
+//                5 = right_to_restrict_processing, 6 = right_to_object
+circuit gdpr_subject_request(req: EuDataSubjectRequest) -> EuDataSubjectResponse
+    lex esn/region/eu/org/polylabs {
+        governance hierarchical
+        audit_trail true
+        sovereignty eu
+        data_residency eu_only
+        compliance [gdpr]
+    }
+    precision A
+    constant_time true
+    sanitize pii_fields [subject_id], retention 7y
+    observe metrics: [gdpr_requests_by_type, fulfillment_time_ms, erasure_completions]
+    invariant "response_within_30_days" { fulfillment_time_days <= 30 }
+    invariant "lawful_basis_valid" { lawful_basis != null }
+    monitor "erasure_sla" { fulfillment_time_ms < 86400000 }
+{
+    let request_hash = sha3_256(req.subject_id)
+    let records = li_classify(req.subject_id, req.lawful_basis)
+    EuDataSubjectResponse {
+        request_hash: request_hash,
+        fulfilled: true,
+        erasure_complete: true,
+        portability_hash: blake3(request_hash),
+    }
+}

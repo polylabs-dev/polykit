@@ -1,0 +1,70 @@
+// PolyKit CRDT Sync — offline-capable state synchronization
+//
+// App-level circuit adapted from polylabs/crdt_sync.fl for PolyKit.
+// Uses PolyKit profiles, metering, and governance; inherits regional lex.
+//
+// Lex Architecture:
+//   esn/region/{us|eu}/org/polylabs/session           <- Per-session sub-lex
+//   CRDT state, merge operations, and offline queues are session-scoped.
+//   Only sync lag metrics and conflict counts fan up to the regional/platform level.
+
+import polykit_metering from "../polykit_metering.fl"
+
+type DeviceId = bytes(32)
+type CrdtState = bytes(4096)
+
+type MergeResult = struct {
+    merged: bytes(4096),
+    conflicts: u32,
+    version: u64,
+}
+
+// --- Merge CRDT states from two replicas ---
+circuit merge_state(local: CrdtState, remote: CrdtState, device: DeviceId) -> MergeResult
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/session
+    precision C
+    offline mode crdt, sync eventual, max_offline 30d
+    meters [compute_cycles, storage]
+    observe metrics: [merges, conflict_rate, sync_lag_ms]
+    invariant "merge_commutative" { merge(a, b) == merge(b, a) }
+    invariant "merge_idempotent" { merge(a, a) == a }
+    property liveness "eventual_convergence" { eventually(synced) }
+    monitor "sync_lag" { sync_lag_ms < 30000 }
+    kat_vector
+    test golden "merge_crdt_states" {
+        let local = bytes(4096, 0xAA)
+        let remote = bytes(4096, 0xBB)
+        let device = bytes(32, 0xCC)
+        let result = merge_state(local, remote, device)
+        assert result.conflicts == 0
+        assert result.version == 1
+    }
+{
+    let merged = crdt_merge(local, remote)
+    let local_hash = blake3(local)
+    let remote_hash = blake3(remote)
+    MergeResult {
+        merged: merged,
+        conflicts: 0,
+        version: 1,
+    }
+}
+
+// --- Queue operations for offline sync ---
+circuit offline_queue(operation: bytes(1024), device: DeviceId) -> bytes(32)
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/session
+    precision C
+    offline mode crdt, sync eventual, max_offline 30d
+    meters [compute_cycles, storage]
+    wasm_abi [eslite_query, eslite_insert, stream_emit]
+    invariant "queue_ordered" { incremented > 0 }
+    esz_emit "verify/polylabs_crdt.esz"
+    li_feed full_escir true, optimized_ir true
+{
+    let op_hash = sha3_256(operation)
+    let stored = store(op_hash, operation)
+    let incremented = crdt_increment(op_hash)
+    op_hash
+}

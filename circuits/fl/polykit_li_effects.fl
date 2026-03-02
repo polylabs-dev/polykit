@@ -1,0 +1,78 @@
+// PolyKit LI Effects — Learned Intelligence content classification
+//
+// Generic LI (Learned Intelligence) auto-classification with human-in-the-loop feedback.
+// Reusable by any Poly app that needs content classification:
+// Poly Data (file tagging), Poly Mail (sensitivity), Poly Messenger (routing).
+
+type ClassificationSuggestion = struct {
+    tag: string,
+    confidence: u64,
+    alternatives: [Alternative; 5],
+}
+
+type Alternative = struct {
+    tag: string,
+    confidence: u64,
+}
+
+type HumanFeedback = struct {
+    sample_hash: bytes(32),
+    rating: u8,
+    correction: string,
+    reviewer_hash: bytes(32),
+    timestamp_ms: u64,
+}
+
+type ConfidenceThresholds = struct {
+    auto_accept: u64,
+    review_required: u64,
+    auto_reject: u64,
+}
+
+stream classification_events: event<ClassificationSuggestion>
+    classify tag {
+        field_governance {
+            tag: public,
+            confidence: public,
+            alternatives: encrypted(audience: internal),
+        }
+    }
+
+// --- Auto-classify content using LI Effects ---
+circuit classify_content(content: bytes, filename: string, metadata: bytes(256)) -> ClassificationSuggestion
+    profile poly_framework_standard
+    observe metrics: [classifications, confidence_distribution, auto_accept_rate]
+    monitor "confidence_drift" { avg_confidence > 0.60 }
+    feedback classification_events -> li_train
+    test golden "classify_basic_content" {
+        let suggestion = classify_content(bytes(128, 0xAA), "test.txt", bytes(256, 0x00))
+        assert len(suggestion.tag) > 0
+        assert suggestion.confidence >= 0
+    }
+{
+    let embedding = li_embed(content, filename)
+    let suggestion = li_classify(content, metadata)
+    let confidence = li_infer(embedding, suggestion)
+    ClassificationSuggestion { tag: suggestion, confidence: confidence, alternatives: [] }
+}
+
+// --- Submit human review feedback for LI training ---
+circuit submit_feedback(feedback: HumanFeedback) -> bool
+    profile poly_framework_standard
+    wasm_abi [eslite_insert, stream_emit]
+    observe metrics: [feedback_submitted, correction_rate]
+{
+    let stored = store(feedback.sample_hash, feedback)
+    emit(classification_events, feedback)
+    true
+}
+
+// --- Get current confidence thresholds ---
+circuit get_thresholds() -> ConfidenceThresholds
+    profile poly_framework_standard
+    observe metrics: [threshold_queries]
+    wasm_abi [eslite_query]
+{
+    let thresholds = load("confidence_thresholds")
+    thresholds
+}

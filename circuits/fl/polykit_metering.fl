@@ -1,0 +1,87 @@
+// PolyKit Metering — 8-dimension resource metering
+//
+// Every Poly app uses the same metering dimensions (E/H/B/S/O/P/C/M).
+// Reusable by all Poly apps: Poly Data, Poly Messenger, Poly Mail,
+// Poly VPN, Poly Pass, Poly OAuth, Poly Mind.
+
+type MeteringDimension = enum {
+    Executions,
+    Hashes,
+    Bandwidth,
+    Storage,
+    Observables,
+    Proofs,
+    Circuits,
+    MpcSessions,
+}
+
+type DimensionValues = struct {
+    executions: u64,
+    hashes: u64,
+    bandwidth: u64,
+    storage: u64,
+    observables: u64,
+    proofs: u64,
+    circuits: u64,
+    mpc_sessions: u64,
+}
+
+type TierLimits = struct {
+    tier_name: string,
+    limits: DimensionValues,
+}
+
+type MeteringRecord = struct {
+    user_id: bytes(16),
+    operation: string,
+    dimensions: DimensionValues,
+    timestamp_ms: u64,
+}
+
+stream metering_events: event<MeteringRecord>
+    | throttle 1000/s burst 2000
+
+// --- Record a metering event for a single operation ---
+circuit record_usage(user_id: bytes(16), operation: string, dims: DimensionValues) -> MeteringRecord
+    profile poly_framework_standard
+    meters [compute_cycles, memory_bytes]
+    observe metrics: [metering_records, dimension_totals]
+    monitor "metering_throughput" { metering_records > 0 }
+    wasm_abi [eslite_insert, stream_emit, now]
+    test golden "record_basic_usage" {
+        let dims = DimensionValues { executions: 1, hashes: 0, bandwidth: 1024, storage: 0, observables: 1, proofs: 0, circuits: 0, mpc_sessions: 0 }
+        let rec = record_usage(bytes(16, 0x01), "test_op", dims)
+        assert rec.dimensions.executions == 1
+        assert rec.dimensions.bandwidth == 1024
+    }
+{
+    let ts = now()
+    let record = MeteringRecord {
+        user_id: user_id,
+        operation: operation,
+        dimensions: dims,
+        timestamp_ms: ts,
+    }
+    emit(metering_events, record)
+    record
+}
+
+// --- Check if current usage exceeds tier limits ---
+circuit check_limits(current: DimensionValues, tier: TierLimits) -> [MeteringDimension; 8]
+    profile poly_framework_standard
+    observe metrics: [limit_checks, limit_violations]
+    invariant "no_false_positives" { violation implies current_dim > limit_dim }
+{
+    parallel for i in 0..8 {
+        if current[i] > tier.limits[i] { MeteringDimension::from_index(i) } else { null }
+    }
+}
+
+// --- Get accumulated usage for a user ---
+circuit get_usage_summary(user_id: bytes(16)) -> DimensionValues
+    profile poly_framework_standard
+    observe metrics: [usage_queries]
+    wasm_abi [eslite_query]
+{
+    load(user_id)
+}

@@ -1,0 +1,99 @@
+// PolyKit Media Stream — PQ-encrypted voice and video SFU
+//
+// App-level circuit adapted from polylabs/media_stream.fl for PolyKit.
+// Uses PolyKit profiles, metering, and governance; inherits regional lex.
+//
+// Lex Architecture:
+//   esn/region/{us|eu}/org/polylabs/session           <- Per-session sub-lex
+//   Voice and video frames, encryption keys, and participant identities
+//   stay within the session sub-lex. Only session metadata (codec, latency)
+//   fans in to the regional/platform level.
+
+import polykit_metering from "../polykit_metering.fl"
+import polykit_governance from "../polykit_governance.fl"
+
+type SessionId = bytes(32)
+type MediaFrame = bytes(8192)
+type ParticipantId = bytes(32)
+
+type VoiceSetupResult = struct {
+    session_id: SessionId,
+    key_hash: bytes(32),
+    codec: string,
+}
+
+type VideoFrame = struct {
+    frame_data: bytes(8192),
+    sequence: u64,
+    encrypted: bool,
+}
+
+stream voice_channel: event<MediaFrame>
+    | throttle 50/s burst 100
+
+stream video_channel: event<MediaFrame>
+    | throttle 30/s burst 60
+
+// --- Set up encrypted voice session ---
+circuit voice_setup(caller: ParticipantId, callee: ParticipantId, pk: bytes(1568)) -> VoiceSetupResult
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/session
+    precision C
+    constant_time true
+    blind relay
+    meters [compute_cycles, memory_bytes]
+    observe metrics: [voice_sessions, setup_latency_ms]
+    invariant "key_exchange_complete" { kem != null }
+    invariant "session_id_unique" { session_id != null }
+    monitor "setup_latency" { setup_latency_ms < 2000 }
+    test golden "voice_setup_basic" {
+        let caller = bytes(32, 0xAA)
+        let callee = bytes(32, 0xBB)
+        let pk = bytes(1568, 0xCC)
+        let result = voice_setup(caller, callee, pk)
+        assert len(result.session_id) == 32
+        assert result.codec == "opus_48k"
+    }
+    kat_vector "media_sha3_mlkem_blake3_aes" {
+        input caller = bytes(32, 0xAA)
+        expect sha3_256(caller) != 0x[0000000000000000000000000000000000000000000000000000000000000000]
+        expect len(mlkem_encaps(bytes(1568, 0xCC))) > 0
+        expect blake3(mlkem_encaps(bytes(1568, 0xCC))) != 0x[0000000000000000000000000000000000000000000000000000000000000000]
+    }
+{
+    let session_id = sha3_256(caller)
+    let kem = mlkem_encaps(pk)
+    let key = blake3(kem)
+    let nonce = blake3(session_id)
+    VoiceSetupResult {
+        session_id: session_id,
+        key_hash: key,
+        codec: "opus_48k",
+    }
+}
+
+// --- Video SFU: selective forwarding with PQ encryption ---
+circuit video_sfu(frame: MediaFrame, session: SessionId, recipients: bytes(256), pk: bytes(1568)) -> VideoFrame
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/session
+    precision C
+    blind relay
+    meters [compute_cycles, bandwidth]
+    observe metrics: [video_frames, sfu_fanout, frame_latency_us]
+    invariant "frame_encrypted" { encrypted == true }
+    invariant "frame_padded" { padded_size == 8192 }
+    monitor "frame_latency" { frame_latency_us < 50000 }
+    fuzz_target
+    esz_emit "verify/polylabs_media.esz"
+    li_feed full_escir true, optimized_ir true
+{
+    let kem = mlkem_encaps(pk)
+    let nonce = blake3(session)
+    let encrypted = aes_gcm_encrypt(kem, nonce, frame, pk)
+    let padded = pad_to_size(encrypted, 8192)
+    VideoFrame {
+        frame_data: padded,
+        sequence: 0,
+        encrypted: true,
+    }
+}

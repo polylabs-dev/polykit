@@ -370,7 +370,7 @@ Most computation logic lives in `.fl` circuits; crates contain only runtime plum
 Apps compose PolyKit `.fl` circuits and extend with domain-specific circuits and graphs:
 
 ```fastlang
-circuit polydata_upload(user_id: bytes(16), file: bytes) -> bytes(32)
+circuit polyfiles_upload(user_id: bytes(16), file: bytes) -> bytes(32)
     profile poly_framework_standard
     composes: [polykit_identity, polykit_metering, polykit_sanitize]
     lex esn/global/org/polylabs/data
@@ -385,8 +385,8 @@ circuit polydata_upload(user_id: bytes(16), file: bytes) -> bytes(32)
 Each app instantiates its own `user_graph` and `metering_graph` in its own lex namespace:
 
 ```fastlang
-// In polydata — isolated identity
-graph polydata_users: user_graph {
+// In polyfiles — isolated identity
+graph polyfiles_users: user_graph {
     lex esn/global/org/polylabs/data/identity
 }
 
@@ -403,7 +403,7 @@ import { PolyProvider } from '@polykit/react';
 
 export default function App() {
   return (
-    <PolyProvider wasm="/pkg/polydata.wasm" hkdfContext="poly-data-v1">
+    <PolyProvider wasm="/pkg/polyfiles.wasm" hkdfContext="poly-files-v1">
       <WidgetGrid />
     </PolyProvider>
   );
@@ -424,7 +424,7 @@ export default function App() {
 | Metering | Per-product `metering_graph` instance | Separate graph, separate lex, separate `user_id` |
 | Billing | Blinded payment tokens | Payment backend sees token, not SPARK identity or product |
 | RBAC | Per-product `rbac` graph instance | Separate RBAC graph per product; enterprise bridge is opt-in |
-| ESLite | Per-product local database namespace | `/polydata/*`, `/polymessenger/*` — no shared tables |
+| ESLite | Per-product local database namespace | `/polyfiles/*`, `/polymessenger/*` — no shared tables |
 
 ### Enterprise Lex Bridge
 
