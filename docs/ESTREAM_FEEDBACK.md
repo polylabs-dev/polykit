@@ -799,7 +799,7 @@ The two patterns chain in the FPGA pipeline: Delta Curate encodes (~20x), then C
 ### FPGA Resources
 
 - Encoder: ~800 LUTs, 2 BRAMs, 4-5 cycles/record @ 200 MHz (40-50M records/sec)
-- Fits alongside baseline-gate on Platypus eFPGA
+- Fits alongside baseline-gate on eStream eFPGA
 
 ### Relevance to PolyKit
 
