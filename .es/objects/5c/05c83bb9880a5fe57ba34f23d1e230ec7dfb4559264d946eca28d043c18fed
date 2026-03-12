@@ -1,0 +1,42 @@
+Å§Blobë≈Ÿtree 5842b9afabe3aff7c598275ad5972963fe65aec1
+author toddrooke <todd@toddrooke.com> 1771283002 -0700
+committer toddrooke <todd@toddrooke.com> 1771283002 -0700
+
+feat: initial PolyKit scaffold ‚Äî WASM-first shared framework
+
+Rust/WASM-first architecture for all Poly Labs apps.
+ESCIR circuits are the primary development model; TypeScript
+is a thin DOM binding layer only.
+
+Crates (Rust ‚Üí WASM):
+- polykit-core: SPARK identity, ML-DSA-87/ML-KEM-1024 crypto,
+  8-dimension metering, classification tiers + scatter policies
+- polykit-eslite: migration runner, schema DSL, query engine,
+  snapshot+delta sync
+- polykit-console: typed event bus, widget data pipeline,
+  ESZ demo fixtures, RBAC, 9 generic observability/governance
+  widget processors
+- polykit-sanitize: 3-stage PII/PCI/HIPAA/GDPR compliance pipeline
+  (detect ‚Üí transform ‚Üí PoVC-witnessed audit)
+- polykit-wasm: wasm-bindgen entry point conforming to ESCIR ABI
+  contract (evaluate, circuit_name, circuit_version)
+
+ESCIR circuits (shared templates):
+- polykit-identity: SPARK auth + HKDF key derivation
+- polykit-metering: 8-dimension resource metering
+- polykit-telemetry: StreamSight observability pipeline
+- polykit-rate-limiter: FIFO with backpressure
+- polykit-sanitize: 3-stage sanitization
+- polykit-eslm-classify: generic ESLM auto-classification
+
+Thin TS layer (@polykit/react):
+- PolyProvider: loads WASM, inits app context
+- Hooks: useWasmSubscription, useWasmEmit, useWasmWidgetData
+- WidgetShell: RBAC gate, layout, loading state
+
+Docs:
+- ARCHITECTURE.md: WASM-first design, build pipeline, usage
+- ESTREAM_FEEDBACK.md: running feedback on eStream platform
+
+Build follows estream-io #550 pipeline:
+ESCIR ‚Üí Rust codegen ‚Üí WASM ‚Üí wasm-opt ‚Üí ML-DSA-87 sign ‚Üí .escd

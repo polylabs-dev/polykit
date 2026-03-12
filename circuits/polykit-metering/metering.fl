@@ -1,0 +1,192 @@
+/// polykit-metering.fl — 8-dimension resource metering
+/// lex polykit/metering
+/// Epic: polylabs-dev/polykit#11, Issue: #13
+///
+/// Standardized metering across all Poly Labs apps.
+/// 8 dimensions: Executions, Hashes, Bandwidth, Storage,
+/// Observables, Proofs, Circuits, MPC sessions.
+/// Per-tier limit checking returns which dimensions are violated.
+
+component polykit_metering version "0.2.0" {
+    export record_usage, check_limits, get_usage_summary, accumulate
+}
+
+profile metering_defaults {
+    lex polykit/metering
+    precision B
+}
+
+// ── Data Types ──────────────────────────────────────────────────────────────
+
+type MeteringDimension = enum {
+    Executions,
+    Hashes,
+    Bandwidth,
+    Storage,
+    Observables,
+    Proofs,
+    Circuits,
+    MpcSessions,
+}
+
+data DimensionValues : metering v1 {
+    executions: u64,
+    hashes: u64,
+    bandwidth: u64,
+    storage: u64,
+    observables: u64,
+    proofs: u64,
+    circuits: u64,
+    mpc_sessions: u64,
+}
+    encode
+    observe metrics [executions, bandwidth, storage] level adaptive
+    store kv { key: user_id, partition_by: billing_period }
+
+data MeteringRecord : metering v1 {
+    user_id: bytes(16),
+    operation: bytes(64),
+    dimensions: DimensionValues,
+    timestamp_ms: u64,
+}
+    encode
+    observe metrics [operation] level adaptive
+
+data TierLimits : metering v1 {
+    tier_name: bytes(32),
+    limits: DimensionValues,
+}
+    encode
+
+// ── Circuits ────────────────────────────────────────────────────────────────
+
+/// Record a metering event for a single operation.
+circuit record_usage(
+    user_id: bytes(16),
+    operation: bytes(64),
+    dims: DimensionValues
+) -> MeteringRecord
+    @metering_defaults
+    observe metrics: [usage_recorded, operation]
+    test golden {
+        input { user_id: bytes(16), operation: "vcs.push", dims: DimensionValues { executions: 1, hashes: 50, bandwidth: 4096, storage: 4096, observables: 0, proofs: 0, circuits: 0, mpc_sessions: 0 } }
+        assert { result.user_id == input.user_id }
+        assert { result.operation == "vcs.push" }
+    }
+{
+    MeteringRecord {
+        user_id: user_id,
+        operation: operation,
+        dimensions: dims,
+        timestamp_ms: current_time_ms(),
+    }
+}
+
+/// Check if current usage exceeds tier limits.
+/// Returns list of violated dimensions.
+circuit check_limits(
+    current: DimensionValues,
+    tier_limits: TierLimits
+) -> list<MeteringDimension>
+    @metering_defaults
+    precision A
+    observe metrics: [limit_checks, violations_detected]
+    invariant "non_negative" { current.executions >= 0 }
+    test golden {
+        input {
+            current: DimensionValues { executions: 100, hashes: 0, bandwidth: 0, storage: 0, observables: 0, proofs: 0, circuits: 0, mpc_sessions: 0 },
+            tier_limits: TierLimits { tier_name: "free", limits: DimensionValues { executions: 50, hashes: 1000, bandwidth: 1000000, storage: 1000000, observables: 100, proofs: 10, circuits: 10, mpc_sessions: 0 } }
+        }
+        assert { result.len >= 1 }
+    }
+{
+    let violated = []
+    if current.executions > tier_limits.limits.executions { violated = append(violated, MeteringDimension::Executions) }
+    if current.hashes > tier_limits.limits.hashes { violated = append(violated, MeteringDimension::Hashes) }
+    if current.bandwidth > tier_limits.limits.bandwidth { violated = append(violated, MeteringDimension::Bandwidth) }
+    if current.storage > tier_limits.limits.storage { violated = append(violated, MeteringDimension::Storage) }
+    if current.observables > tier_limits.limits.observables { violated = append(violated, MeteringDimension::Observables) }
+    if current.proofs > tier_limits.limits.proofs { violated = append(violated, MeteringDimension::Proofs) }
+    if current.circuits > tier_limits.limits.circuits { violated = append(violated, MeteringDimension::Circuits) }
+    if current.mpc_sessions > tier_limits.limits.mpc_sessions { violated = append(violated, MeteringDimension::MpcSessions) }
+    violated
+}
+
+/// Get accumulated usage for a user in the current billing period.
+circuit get_usage_summary(
+    user_id: bytes(16)
+) -> DimensionValues
+    @metering_defaults
+    observe metrics: [usage_lookups]
+{
+    kv_get("metering", user_id)
+}
+
+/// Accumulate dimension values (add another record's dimensions to running total).
+circuit accumulate(
+    current: DimensionValues,
+    delta: DimensionValues
+) -> DimensionValues
+    @metering_defaults
+    precision A
+    test golden {
+        input {
+            current: DimensionValues { executions: 10, hashes: 0, bandwidth: 0, storage: 0, observables: 0, proofs: 0, circuits: 0, mpc_sessions: 0 },
+            delta: DimensionValues { executions: 5, hashes: 0, bandwidth: 0, storage: 0, observables: 0, proofs: 0, circuits: 0, mpc_sessions: 0 }
+        }
+        assert { result.executions == 15 }
+    }
+{
+    DimensionValues {
+        executions: current.executions + delta.executions,
+        hashes: current.hashes + delta.hashes,
+        bandwidth: current.bandwidth + delta.bandwidth,
+        storage: current.storage + delta.storage,
+        observables: current.observables + delta.observables,
+        proofs: current.proofs + delta.proofs,
+        circuits: current.circuits + delta.circuits,
+        mpc_sessions: current.mpc_sessions + delta.mpc_sessions,
+    }
+}
+
+// ── Streams ─────────────────────────────────────────────────────────────────
+
+stream metering_events {
+    topic "lex://estream/apps/{app_namespace}/metering/{user_id}"
+    payload MeteringRecord
+    retention 90d
+    consumers [billing, audit, console]
+
+    @streamsight_filter baseline
+    @streamsight_sensitivity 2.0
+    @streamsight_warmup 1000
+}
+
+stream limit_violations {
+    topic "lex://estream/apps/{app_namespace}/metering/violations"
+    retention 365d
+    consumers [billing, console, alerts]
+
+    event limit_exceeded {
+        user_id: bytes(16),
+        dimension: u8,
+        current_value: u64,
+        limit_value: u64,
+        tier_name: bytes(32),
+        timestamp_ms: u64,
+    }
+}
+
+// ── Journey Tests ───────────────────────────────────────────────────────────
+
+journey metering_limit_flow {
+    party app
+
+    step app record1 = record_usage(bytes(16), "vcs.push", DimensionValues { executions: 30, hashes: 100, bandwidth: 4096, storage: 4096, observables: 0, proofs: 0, circuits: 0, mpc_sessions: 0 })
+    step app record2 = record_usage(bytes(16), "vcs.push", DimensionValues { executions: 25, hashes: 50, bandwidth: 2048, storage: 2048, observables: 0, proofs: 0, circuits: 0, mpc_sessions: 0 })
+    step app total = accumulate(app.record1.dimensions, app.record2.dimensions)
+    step app check = check_limits(app.total, TierLimits { tier_name: "free", limits: DimensionValues { executions: 50, hashes: 1000, bandwidth: 1000000, storage: 1000000, observables: 100, proofs: 10, circuits: 10, mpc_sessions: 0 } })
+
+    invariant "exceeds_executions" { app.total.executions == 55 }
+    invariant "violation_detected" { app.check.len >= 1 }
+}

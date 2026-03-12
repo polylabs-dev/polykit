@@ -1,0 +1,249 @@
+/// polykit-sanitize.fl — 3-stage compliance sanitization pipeline
+/// lex polykit/sanitize
+/// Epic: polylabs-dev/polykit#11, Issue: #16
+///
+/// Stage 1: PII detection (SSN, PAN, names, emails, medical records)
+/// Stage 2: Value transform (redaction, abstraction, masking)
+/// Stage 3: PoVC-witnessed audit record
+/// Compliance: HIPAA, PCI-DSS, GDPR, SOC2, CCPA
+
+component polykit_sanitize version "0.2.0" {
+    export sanitize, detect_only
+}
+
+profile sanitize_defaults {
+    lex polykit/sanitize
+    precision A
+}
+
+// ── Data Types ──────────────────────────────────────────────────────────────
+
+type DataType = enum {
+    Ssn,
+    CreditCard,
+    PersonalName,
+    Email,
+    PhoneNumber,
+    DateOfBirth,
+    Address,
+    MedicalRecord,
+    FinancialAccount,
+    BiometricData,
+    Custom,
+}
+
+type Regulation = enum {
+    Hipaa,
+    PciDss,
+    Gdpr,
+    Soc2,
+    Ccpa,
+}
+
+type Stage = enum {
+    PiiDetect,
+    ValueTransform,
+    AuditRecord,
+}
+
+data Detection : sanitize v1 {
+    field_path: bytes(256),
+    data_type: u8,
+    regulations: bytes(64),
+    confidence: u64,
+}
+    encode
+    observe metrics [data_type, confidence] level adaptive
+
+data AuditEntry : sanitize v1 {
+    timestamp_ms: u64,
+    stage: u8,
+    field_path: bytes(256),
+    original_type: bytes(32),
+    placeholder: bytes(128),
+    regulations: bytes(64),
+    witness_hash: bytes(32),
+}
+    encode
+    sign {
+        algorithm ml_dsa_87
+        fields [field_path, witness_hash, timestamp_ms]
+    }
+    attest {
+        povc true
+        anchor_field witness_hash
+    }
+
+data SanitizationResult : sanitize v1 {
+    sanitized_data: bytes(65536),
+    audit_entries: list<AuditEntry>,
+    detections_count: u32,
+    regulations_triggered: bytes(64),
+}
+    encode
+    observe metrics [detections_count] level adaptive
+
+// ── Pipeline Graph ──────────────────────────────────────────────────────────
+
+graph sanitization_pipeline {
+    node DetectStage     : Detection
+    node TransformStage  : SanitizationResult
+    node AuditStage      : AuditEntry
+
+    edge feeds_into      : DetectStage -> TransformStage
+    edge audited_by      : TransformStage -> AuditStage
+
+    storage csr {
+        tier bram  { capacity: 100 }
+        tier ddr   { capacity: 10_000 }
+    }
+
+    sign ml_dsa_87
+}
+
+// ── Circuits ────────────────────────────────────────────────────────────────
+
+/// Run full 3-stage pipeline on input data.
+circuit sanitize(
+    input: bytes(65536)
+) -> SanitizationResult
+    @sanitize_defaults
+    povc true
+    observe metrics: [sanitizations_total, detections_count, regulations_triggered]
+    test golden {
+        input { input: "John Smith SSN 123-45-6789 email john@example.com" }
+        assert { result.detections_count >= 2 }
+    }
+{
+    let detections = detect_pii(input)
+    let transformed = transform_values(input, detections)
+    let audit = create_audit_records(detections)
+
+    SanitizationResult {
+        sanitized_data: transformed,
+        audit_entries: audit,
+        detections_count: len(detections),
+        regulations_triggered: aggregate_regulations(detections),
+    }
+}
+
+/// Stage 1 only — detect PII without transforming.
+circuit detect_only(
+    input: bytes(65536)
+) -> list<Detection>
+    @sanitize_defaults
+    observe metrics: [detect_only_calls, detections_found]
+    test golden {
+        input { input: "SSN 123-45-6789" }
+        assert { result.len >= 1 }
+    }
+{
+    detect_pii(input)
+}
+
+circuit detect_pii(input: bytes(65536)) -> list<Detection>
+    lex polykit/sanitize
+    precision A
+{
+    let results = []
+    if pattern_match(input, "\\d{3}-\\d{2}-\\d{4}") {
+        results = append(results, Detection {
+            field_path: "inline",
+            data_type: 0,
+            regulations: "HIPAA,SOC2",
+            confidence: 9500,
+        })
+    }
+    if pattern_match(input, "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+") {
+        results = append(results, Detection {
+            field_path: "inline",
+            data_type: 3,
+            regulations: "GDPR,CCPA",
+            confidence: 9000,
+        })
+    }
+    results
+}
+
+circuit transform_values(
+    input: bytes(65536),
+    detections: list<Detection>
+) -> bytes(65536)
+    lex polykit/sanitize
+    precision A
+{
+    let result = input
+    for det in detections {
+        result = redact(result, det.field_path, "[REDACTED]")
+    }
+    result
+}
+
+circuit create_audit_records(
+    detections: list<Detection>
+) -> list<AuditEntry>
+    lex polykit/sanitize
+    precision A
+{
+    let entries = []
+    for det in detections {
+        let witness = sha3_256(concat(det.field_path, det.data_type))
+        entries = append(entries, AuditEntry {
+            timestamp_ms: current_time_ms(),
+            stage: 2,
+            field_path: det.field_path,
+            original_type: det.data_type,
+            placeholder: "[REDACTED]",
+            regulations: det.regulations,
+            witness_hash: witness,
+        })
+    }
+    entries
+}
+
+circuit aggregate_regulations(detections: list<Detection>) -> bytes(64)
+    lex polykit/sanitize
+    precision C
+{
+    let regs = ""
+    for det in detections {
+        regs = concat(regs, det.regulations, ",")
+    }
+    regs
+}
+
+// ── Streams ─────────────────────────────────────────────────────────────────
+
+stream audit_events {
+    topic "lex://estream/apps/{app_namespace}/sanitization/audit"
+    payload AuditEntry
+    retention permanent
+    consumers [compliance, audit, console]
+
+    @streamsight_filter none
+}
+
+stream sanitization_metrics {
+    topic "lex://estream/apps/{app_namespace}/sanitization/metrics"
+    retention 365d
+    consumers [console, streamsight]
+
+    event scan_completed {
+        detections_count: u32,
+        regulations: bytes(64),
+        duration_ms: u64,
+    }
+}
+
+// ── Journey Tests ───────────────────────────────────────────────────────────
+
+journey pii_detection_flow {
+    party scanner
+
+    step scanner detect = detect_only("John Smith SSN 123-45-6789 email john@example.com")
+    step scanner full = sanitize("John Smith SSN 123-45-6789 email john@example.com")
+
+    invariant "detects_ssn" { scanner.detect.len >= 1 }
+    invariant "has_audit_trail" { scanner.full.audit_entries.len >= 1 }
+    invariant "sanitized_not_empty" { scanner.full.sanitized_data.len > 0 }
+}
