@@ -1,0 +1,40 @@
+[component]
+name = "polykit-identity"
+version = "0.2.0"
+category = "smart-circuit"
+implementation_type = "FastLang"
+status = "Published"
+description = "SPARK identity + PQ crypto: HKDF key derivation, ML-DSA-87 signing, ML-KEM-1024 encapsulation, auth handshake FSM"
+license = "Apache-2.0"
+repository = "https://github.com/polylabs-dev/polykit"
+keywords = ["identity", "spark", "ml-dsa-87", "ml-kem-1024", "pq-crypto", "hkdf", "authentication"]
+
+[component.author]
+name = "Poly Labs"
+email = "engineering@polylabs.dev"
+url = "https://polylabs.dev"
+
+[component.marketplace]
+pricing = "free"
+visibility = "open"
+
+[component.estream]
+min_version = "0.11.0"
+
+[component.dependencies]
+
+[component.schemas]
+provides = ["DerivedKeys", "Signature", "EncapsulatedKey", "EncryptedPayload", "AppContext"]
+requires = []
+
+[component.circuits]
+provides = ["derive_keys", "derive_user_id", "sign_message", "verify_signature", "encapsulate_key", "decapsulate_key", "create_app_context", "format_user_topic", "format_global_topic"]
+target = ["cpu", "fpga"]
+
+[component.lifecycle]
+status = "active"
+breaking_change_notice_days = 90
+changelog = "CHANGELOG.md"
+
+[component.include]
+circuits = ["identity.fl"]
