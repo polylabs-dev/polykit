@@ -1,6 +1,6 @@
 [component]
 name = "polykit"
-version = "0.11.0"
+version = "0.12.0"
 type = "sdk"
 description = "Shared SDK for all Poly Labs products"
 
@@ -9,7 +9,7 @@ total = 22
 path = "circuits/fl"
 
 [component.dependencies]
-estream = "0.11.0"
+estream = "0.12.0"
 
 [component.telemetry]
 schema_hash_circuit = "compute_schema_hash"

@@ -19,7 +19,7 @@ pricing = "free"
 visibility = "open"
 
 [component.estream]
-min_version = "0.11.0"
+min_version = "0.12.0"
 
 [component.dependencies]
 

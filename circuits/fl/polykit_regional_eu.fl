@@ -24,7 +24,7 @@ data EuComplianceResult : polykit v1 {
     audit_hash: bytes(32),
 }
     store kv
-    govern lex esn/region/eu/org/polylabs
+    govern lex region/eu/org/polylabs
     cortex {
         redact [gdpr_status],
         infer on_write,
@@ -37,7 +37,7 @@ data EuDataSubjectRequest : polykit v1 {
     lawful_basis: bytes(16),
 }
     store kv
-    govern lex esn/region/eu/org/polylabs
+    govern lex region/eu/org/polylabs
     cortex {
         redact [subject_id],
         infer on_write,
@@ -51,7 +51,7 @@ data EuDataSubjectResponse : polykit v1 {
     portability_hash: bytes(32),
 }
     store kv
-    govern lex esn/region/eu/org/polylabs
+    govern lex region/eu/org/polylabs
     cortex {
         infer on_write
     }
@@ -63,7 +63,7 @@ stream eu_compliance_events: event<EuComplianceResult>
 // --- EU GDPR compliance processor ---
 @guard(block_on: gdpr_violation)
 circuit eu_gdpr_processor(subject: bytes(32), data: bytes(4096)) -> EuComplianceResult
-    lex esn/region/eu/org/polylabs {
+    lex region/eu/org/polylabs {
         governance hierarchical
         audit_trail true
         sovereignty eu
@@ -95,9 +95,9 @@ circuit eu_gdpr_processor(subject: bytes(32), data: bytes(4096)) -> EuCompliance
             share [compliance_status, audit_hash, anonymous_metrics]
             redact [subject_id, personal_data, pseudonym, consent_record]
     }
-    precision A
+    @precision A
     constant_time true
-    observe metrics: [data_subject_requests, erasure_ops, consent_records, lawful_basis_checks]
+    @observe metrics: [data_subject_requests, erasure_ops, consent_records, lawful_basis_checks]
     cortex policy: gdpr_compliance
     cortex on_anomaly: gdpr_violation_alert
     invariant "data_minimisation" { fields_exposed <= purpose_required }
@@ -125,17 +125,17 @@ circuit eu_gdpr_processor(subject: bytes(32), data: bytes(4096)) -> EuCompliance
 //                3 = right_to_erasure, 4 = right_to_data_portability,
 //                5 = right_to_restrict_processing, 6 = right_to_object
 circuit gdpr_subject_request(req: EuDataSubjectRequest) -> EuDataSubjectResponse
-    lex esn/region/eu/org/polylabs {
+    lex region/eu/org/polylabs {
         governance hierarchical
         audit_trail true
         sovereignty eu
         data_residency eu_only
         compliance [gdpr]
     }
-    precision A
+    @precision A
     constant_time true
     sanitize pii_fields [subject_id], retention 7y
-    observe metrics: [gdpr_requests_by_type, fulfillment_time_ms, erasure_completions]
+    @observe metrics: [gdpr_requests_by_type, fulfillment_time_ms, erasure_completions]
     fuzz_target
     invariant "response_within_30_days" { fulfillment_time_days <= 30 }
     invariant "lawful_basis_valid" { lawful_basis != null }

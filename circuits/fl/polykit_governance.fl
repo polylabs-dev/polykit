@@ -23,7 +23,7 @@ data GovernedRecord : polykit v1 {
     internal_notes: bytes(1024),
 }
     store kv
-    govern lex esn/global/org/polylabs
+    govern lex global/org/polylabs
     cortex {
         redact [pii_data, raw_content, internal_notes],
         obfuscate [assignee],
@@ -37,13 +37,13 @@ data GovernedResult : polykit v1 {
     fields_redacted: u32,
 }
     store kv
-    govern lex esn/global/org/polylabs
+    govern lex global/org/polylabs
 
 // --- Emit a record with field-level governance ---
 @guard(block_on: classification_violation)
 circuit governed_emit(record: GovernedRecord, classification: string) -> GovernedResult
     profile poly_framework_standard
-    lex esn/global/org/polylabs {
+    lex global/org/polylabs {
         governance hierarchical
         audit_trail true
 
@@ -63,7 +63,7 @@ circuit governed_emit(record: GovernedRecord, classification: string) -> Governe
         raw_content: redacted,
         internal_notes: redacted,
     }
-    observe metrics: [governed_emissions, field_redactions, audience_checks]
+    @observe metrics: [governed_emissions, field_redactions, audience_checks]
     monitor "redaction_coverage" { field_redactions > 0 }
     cortex policy: field_visibility
     cortex on_anomaly: classification_violation_alert
@@ -88,7 +88,7 @@ circuit governed_emit(record: GovernedRecord, classification: string) -> Governe
 // --- Check audience visibility for a specific field ---
 circuit check_field_visibility(field_name: string, audience_level: string) -> bool
     profile poly_framework_standard
-    observe metrics: [visibility_checks]
+    @observe metrics: [visibility_checks]
 {
     let policy = lex_policy_lookup(field_name)
     let allowed = li_classify(field_name, audience_level)

@@ -5,7 +5,7 @@
 /// the zero-linkage architecture). Auth overlays track risk scoring and session activity.
 ///
 /// Stratum graph storage + Cortex AI governance
-/// govern lex esn/global/org/polylabs/identity
+/// govern lex global/org/polylabs/identity
 
 import polykit_identity from "../polykit_identity.fl"
 
@@ -17,7 +17,7 @@ data UserInfo : polykit v1 {
     spark_level: u8,
 }
     store graph
-    govern lex esn/global/org/polylabs/identity
+    govern lex global/org/polylabs/identity
     cortex {
         obfuscate [user_id]
         infer on_write
@@ -30,7 +30,7 @@ data DeviceInfo : polykit v1 {
     last_seen_ms: u64,
 }
     store graph
-    govern lex esn/global/org/polylabs/identity
+    govern lex global/org/polylabs/identity
     cortex {
         obfuscate [device_id]
         infer on_write
@@ -44,7 +44,7 @@ data SessionInfo : polykit v1 {
     risk_score: u64,
 }
     store graph
-    govern lex esn/global/org/polylabs/identity
+    govern lex global/org/polylabs/identity
     cortex {
         obfuscate [session_id]
         infer on_write
@@ -57,7 +57,7 @@ data ProductBindingInfo : polykit v1 {
     hkdf_context: string,
 }
     store graph
-    govern lex esn/global/org/polylabs/identity
+    govern lex global/org/polylabs/identity
     cortex {
         redact [hkdf_context]
         infer on_write
@@ -138,21 +138,21 @@ series user_identity_series: user_identity
 
 stream user_graph_events: event<UserInfo>
     retention 7y
-    consumers [governance, audit, streamsight]
+    consumers [governance, audit, observe]
 
 stream session_events: event<SessionInfo>
     retention 365d
-    consumers [governance, streamsight, alerting]
+    consumers [governance, observe, alerting]
 
 // ── Circuits: Node registration ─────────────────────────────────────
 
 /// Register a new user in the identity graph.
 circuit add_user(graph_id: bytes(32), user: UserInfo) -> bytes(16)
     profile poly_framework_standard
-    lex esn/global/org/polylabs/identity
-    precision C
-    povc true
-    observe metrics: [users_registered, spark_level_distribution]
+    lex global/org/polylabs/identity
+    @precision C
+    @attested true
+    @observe metrics: [users_registered, spark_level_distribution]
     monitor "user_registration_rate" { users_registered < 1000 per 3600s }
     invariant "user_id_nonempty" { user.user_id != zero_bytes(16) }
     invariant "spark_level_valid" { user.spark_level <= 5 }
@@ -172,10 +172,10 @@ circuit add_user(graph_id: bytes(32), user: UserInfo) -> bytes(16)
 /// Register a device and link it to a user.
 circuit add_device(graph_id: bytes(32), user_id: bytes(16), device: DeviceInfo) -> bytes(32)
     profile poly_framework_standard
-    lex esn/global/org/polylabs/identity
-    precision C
-    povc true
-    observe metrics: [devices_registered, device_type_distribution]
+    lex global/org/polylabs/identity
+    @precision C
+    @attested true
+    @observe metrics: [devices_registered, device_type_distribution]
     monitor "device_registration_rate" { devices_registered < 500 per 3600s }
     invariant "user_exists" { eslite_exists("user_nodes", user_id) }
     invariant "device_id_nonempty" { device.device_id != zero_bytes(32) }
@@ -193,10 +193,10 @@ circuit add_device(graph_id: bytes(32), user_id: bytes(16), device: DeviceInfo) 
 /// Create a session for a device and return the session ID.
 circuit create_session(graph_id: bytes(32), device_id: bytes(32), ttl_ms: u64) -> SessionInfo
     profile poly_framework_standard
-    lex esn/global/org/polylabs/identity
-    precision C
-    povc true
-    observe metrics: [sessions_created, session_ttl_distribution]
+    lex global/org/polylabs/identity
+    @precision C
+    @attested true
+    @observe metrics: [sessions_created, session_ttl_distribution]
     monitor "session_creation_rate" { sessions_created < 2000 per 3600s }
     invariant "device_exists" { eslite_exists("device_nodes", device_id) }
     invariant "ttl_reasonable" { ttl_ms >= 60000 and ttl_ms <= 86400000 * 30 }
@@ -232,9 +232,9 @@ circuit create_session(graph_id: bytes(32), device_id: bytes(32), ttl_ms: u64) -
 /// Get all active sessions for a user across all devices.
 circuit get_user_sessions(graph_id: bytes(32), user_id: bytes(16)) -> list<SessionInfo>
     profile poly_framework_standard
-    lex esn/global/org/polylabs/identity
-    precision B
-    observe metrics: [session_queries, sessions_returned]
+    lex global/org/polylabs/identity
+    @precision B
+    @observe metrics: [session_queries, sessions_returned]
     monitor "session_query_volume" { session_queries < 500 per 60s }
     invariant "user_exists" { eslite_exists("user_nodes", user_id) }
     meters [compute_cycles, memory_bytes]
@@ -258,10 +258,10 @@ circuit get_user_sessions(graph_id: bytes(32), user_id: bytes(16)) -> list<Sessi
 /// Bind a user to a product with an isolated HKDF context.
 circuit bind_product(graph_id: bytes(32), user_id: bytes(16), product_name: string) -> ProductBindingInfo
     profile poly_framework_standard
-    lex esn/global/org/polylabs/identity
-    precision C
-    povc true
-    observe metrics: [product_bindings, products_per_user]
+    lex global/org/polylabs/identity
+    @precision C
+    @attested true
+    @observe metrics: [product_bindings, products_per_user]
     monitor "binding_rate" { product_bindings < 100 per 3600s }
     invariant "user_exists" { eslite_exists("user_nodes", user_id) }
     invariant "product_name_valid" { len(product_name) > 0 }
@@ -364,7 +364,7 @@ test golden "bind_product_context_isolation" {
     }
 }
 
-kat_vector "sha3_256_user_device_edge" {
+golden_test "sha3_256_user_device_edge" {
     function: "sha3_256"
     input: concat(hex("aa" * 16), hex("bb" * 32))
     expected_property: {

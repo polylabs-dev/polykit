@@ -26,7 +26,7 @@ data RelayResult : polykit v1 {
     hops: u32,
 }
     store kv
-    govern lex esn/global/org/polylabs/session
+    govern lex global/org/polylabs/session
     cortex {
         redact [encrypted_message]
     }
@@ -38,7 +38,7 @@ data PlatformMetrics : polykit v1 {
     network_healthy: bool,
 }
     store kv
-    govern lex esn/global/org/polylabs
+    govern lex global/org/polylabs
     cortex {
         infer on_read
         on_anomaly alert "relay-team"
@@ -56,18 +56,18 @@ stream relay_events {
     }
 }
     retention 30d
-    consumers [streamsight]
+    consumers [observe]
 
 // --- Relay an encrypted message through the blind network ---
 @guard(block_on: relay_session_expired)
 circuit relay_message(msg: Message, dest: bytes(32), session: SessionId, pk: bytes(1568)) -> RelayResult
     profile poly_framework_standard
-    lex esn/global/org/polylabs/session
-    precision B
+    lex global/org/polylabs/session
+    @precision B
     blind relay
     constant_time true
     meters [compute_cycles, bandwidth]
-    observe metrics: [messages_relayed, relay_latency_ms]
+    @observe metrics: [messages_relayed, relay_latency_ms]
     cortex policy: relay_isolation
     invariant "message_encrypted" { encrypted_size >= msg_size }
     invariant "constant_time_relay" { timing_variance < 1000 }
@@ -90,12 +90,12 @@ circuit relay_message(msg: Message, dest: bytes(32), session: SessionId, pk: byt
 // --- Generate cover traffic to obscure real messaging patterns ---
 circuit generate_cover(session: SessionId, rate: u64) -> bytes(4096)
     profile poly_framework_standard
-    lex esn/global/org/polylabs/session
-    precision D
+    lex global/org/polylabs/session
+    @precision D
     blind full
     constant_time true
     meters [bandwidth]
-    observe metrics: [cover_generated, cover_ratio]
+    @observe metrics: [cover_generated, cover_ratio]
 {
     let seed = blake3(session)
     let cover = generate_cover(seed, rate, session, rate)
@@ -107,18 +107,18 @@ circuit generate_cover(session: SessionId, rate: u64) -> bytes(4096)
 // --- Platform network health: fan_in from all sessions ---
 circuit platform_health(query: bytes(256), pk: bytes(1568)) -> PlatformMetrics
     profile poly_framework_standard
-    lex esn/global/org/polylabs {
+    lex global/org/polylabs {
         governance hierarchical
         audit_trail true
         sub_lex session fan_in
     }
-    precision C
-    streamsight true
-    observe metrics: [platform_queries, active_sessions, network_throughput]
+    @precision C
+    @observe true
+    @observe metrics: [platform_queries, active_sessions, network_throughput]
     invariant "no_content_at_platform" { content_visible == false }
     property safety "session_isolation" { no_cross_session_data }
     monitor "network_health" { avg_latency_ms < 500 }
-    esz_emit "verify/polylabs_health.esz"
+    @serialize "verify/polylabs_health.esz"
     ai_feed full_escir true, optimized_ir true, optimization_metadata true
 {
     let query_hash = sha3_256(query)

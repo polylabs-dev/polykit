@@ -10,7 +10,7 @@
 ///   2. Server receives token_hash — cannot reverse to SPARK identity
 ///   3. Entitlement checks use only the blinded token and tier commitment
 ///
-/// govern lex esn/global/org/polylabs/billing
+/// govern lex global/org/polylabs/billing
 
 import polykit_identity from "./polykit_identity.fl"
 
@@ -24,7 +24,7 @@ data BlindedToken : polykit v1 {
     product_scope: string,
 }
     store kv
-    govern lex esn/global/org/polylabs/billing
+    govern lex global/org/polylabs/billing
     cortex {
         obfuscate [token_hash]
         infer on_write
@@ -37,7 +37,7 @@ data SubscriptionProof : polykit v1 {
     signature: bytes(4627),
 }
     store kv
-    govern lex esn/global/org/polylabs/billing
+    govern lex global/org/polylabs/billing
     cortex {
         redact [signature]
         infer on_read
@@ -101,17 +101,17 @@ circuit generate_blinded_token(
     signing_sk: bytes(4896),
 ) -> BlindedToken
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/billing
-    precision C
+    lex global/org/polylabs/billing
+    @precision C
     constant_time true
-    observe metrics: [tokens_generated, tier_distribution]
+    @observe metrics: [tokens_generated, tier_distribution]
     monitor "token_generation_rate" { tokens_generated < 500 per 3600s }
     invariant "valid_tier" { tier >= 0 and tier <= 3 }
     invariant "context_nonempty" { len(product_context) > 0 }
     property safety "no_identity_leak" { output contains no spark_id bits }
     property safety "token_binding" { token_hash commits to tier and product_context }
     fuzz_target
-    kat_vector "blinded_token_derivation" {
+    @golden_test "blinded_token_derivation" {
         input: { spark_id: 0xAA * 32, tier: 1, product_context: "poly-files-v1" }
         expected: { token_hash_len: 32, deterministic: true }
     }
@@ -158,9 +158,9 @@ circuit generate_blinded_token(
 /// Returns whether the proof is valid and the proven tier.
 circuit verify_subscription(proof: SubscriptionProof) -> (bool, SubscriptionTier)
     profile poly_framework_standard
-    lex esn/global/org/polylabs/billing
-    precision B
-    observe metrics: [subscription_verifications, verification_failures]
+    lex global/org/polylabs/billing
+    @precision B
+    @observe metrics: [subscription_verifications, verification_failures]
     monitor "verification_failure_rate" { verification_failures < 50 per 3600s }
     invariant "token_present" { len(proof.blinded_token) == 32 }
     invariant "commitment_present" { len(proof.tier_commitment) == 32 }
@@ -197,9 +197,9 @@ circuit verify_subscription(proof: SubscriptionProof) -> (bool, SubscriptionTier
 /// Check if a blinded token's tier meets or exceeds the required tier.
 circuit check_entitlement(token: BlindedToken, required_tier: SubscriptionTier) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/billing
-    precision B
-    observe metrics: [entitlement_checks, entitlement_grants, entitlement_denials]
+    lex global/org/polylabs/billing
+    @precision B
+    @observe metrics: [entitlement_checks, entitlement_grants, entitlement_denials]
     monitor "denial_rate" { entitlement_denials < 200 per 3600s }
     invariant "token_valid_range" { token.valid_from_ms < token.valid_until_ms }
     property safety "tier_ordering" { higher_tier >= lower_tier implies granted }
@@ -225,10 +225,10 @@ circuit change_subscription(
     signing_sk: bytes(4896),
 ) -> BlindedToken
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/billing
-    precision C
+    lex global/org/polylabs/billing
+    @precision C
     constant_time true
-    observe metrics: [tier_changes, upgrade_count, downgrade_count]
+    @observe metrics: [tier_changes, upgrade_count, downgrade_count]
     monitor "tier_change_rate" { tier_changes < 100 per 3600s }
     invariant "new_tier_different" { new_tier as u8 != token.subscription_tier }
     property safety "no_identity_leak_on_change" { output contains no spark_id bits }

@@ -11,7 +11,7 @@ data RateWindow : polykit v1 {
     window_size_ms: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/rate_limiter
+    govern lex global/org/polylabs/rate_limiter
 
 data RateCheckResult : polykit v1 {
     allowed: bool,
@@ -20,7 +20,7 @@ data RateCheckResult : polykit v1 {
     retry_after_ms: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/rate_limiter
+    govern lex global/org/polylabs/rate_limiter
 
 // ── Streams ─────────────────────────────────────────────────────────
 
@@ -45,7 +45,7 @@ state_machine rate_fsm {
 @guard(block_on: rate_limit_exceeded)
 circuit check_rate(user_id: bytes(16), operation: string, tier: string) -> RateCheckResult
     profile poly_framework_standard
-    observe metrics: [rate_checks, throttle_events, blocked_events]
+    @observe metrics: [rate_checks, throttle_events, blocked_events]
     monitor "throttle_rate" { throttle_events / rate_checks < 0.10 }
     wasm_abi [eslite_query, now]
     invariant "monotonic_consumption" { new_count >= old_count }
@@ -72,7 +72,7 @@ circuit check_rate(user_id: bytes(16), operation: string, tier: string) -> RateC
 // --- Record an operation against rate limits ---
 circuit record_operation(user_id: bytes(16), operation: string) -> bool
     profile poly_framework_standard
-    observe metrics: [operations_recorded]
+    @observe metrics: [operations_recorded]
     wasm_abi [eslite_insert, now]
 {
     let ts = now()

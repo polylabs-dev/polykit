@@ -6,7 +6,7 @@
 /// consumption; capacity overlays track per-product utilization and throttle state.
 ///
 /// Stratum graph storage + Cortex AI governance
-/// govern lex esn/global/org/polylabs/metering
+/// govern lex global/org/polylabs/metering
 
 import polykit_identity from "../polykit_identity.fl"
 
@@ -21,7 +21,7 @@ data ProductMeteringInfo : polykit v1 {
     billing_cycle_start_ms: u64,
 }
     store graph
-    govern lex esn/global/org/polylabs/metering
+    govern lex global/org/polylabs/metering
     cortex {
         infer on_write
     }
@@ -36,7 +36,7 @@ data UserMeteringInfo : polykit v1 {
     last_metered_ms: u64,
 }
     store graph
-    govern lex esn/global/org/polylabs/metering
+    govern lex global/org/polylabs/metering
     cortex {
         obfuscate [user_id]
         infer on_write
@@ -53,7 +53,7 @@ data DimensionBucketInfo : polykit v1 {
     sample_count: u64,
 }
     store graph
-    govern lex esn/global/org/polylabs/metering
+    govern lex global/org/polylabs/metering
     cortex {
         infer on_write
     }
@@ -119,21 +119,21 @@ series metering_aggregation_series: metering_aggregation
 
 stream metering_graph_events: event<UserMeteringInfo>
     retention 365d
-    consumers [billing, streamsight, governance]
+    consumers [billing, observe, governance]
 
 stream capacity_events: event<ProductMeteringInfo>
     retention 90d
-    consumers [streamsight, alerting, billing]
+    consumers [observe, alerting, billing]
 
 // ── Circuits: Registration ──────────────────────────────────────────
 
 /// Register a product in the metering graph with its tier limits.
 circuit register_metered_product(graph_id: bytes(32), product: ProductMeteringInfo) -> bytes(32)
     profile poly_framework_standard
-    lex esn/global/org/polylabs/metering
-    precision C
-    povc true
-    observe metrics: [products_registered, tier_limits_set]
+    lex global/org/polylabs/metering
+    @precision C
+    @attested true
+    @observe metrics: [products_registered, tier_limits_set]
     monitor "product_registration_rate" { products_registered < 50 per 3600s }
     invariant "product_name_valid" { len(product.product_name) > 0 }
     invariant "limits_positive" { product.tier_limit_executions > 0 }
@@ -162,10 +162,10 @@ circuit record_user_usage(
     hashes: u64,
 ) -> UserMeteringInfo
     profile poly_framework_standard
-    lex esn/global/org/polylabs/metering
-    precision C
-    povc true
-    observe metrics: [usage_records, dimension_totals, user_count]
+    lex global/org/polylabs/metering
+    @precision C
+    @attested true
+    @observe metrics: [usage_records, dimension_totals, user_count]
     monitor "usage_record_rate" { usage_records < 5000 per 3600s }
     invariant "product_exists" { eslite_exists("metering_product_nodes", product_id) }
     invariant "user_id_valid" { user_id != zero_bytes(16) }
@@ -214,9 +214,9 @@ circuit record_user_usage(
 /// Aggregate usage across all users for a product and update capacity overlays.
 circuit aggregate_product_usage(graph_id: bytes(32), product_id: bytes(32)) -> ProductMeteringInfo
     profile poly_framework_standard
-    lex esn/global/org/polylabs/metering
-    precision B
-    observe metrics: [aggregations, total_users_aggregated, capacity_pct]
+    lex global/org/polylabs/metering
+    @precision B
+    @observe metrics: [aggregations, total_users_aggregated, capacity_pct]
     monitor "aggregation_frequency" { aggregations < 100 per 3600s }
     invariant "product_exists" { eslite_exists("metering_product_nodes", product_id) }
     property safety "aggregation_bounded" { capacity_pct <= 100 }

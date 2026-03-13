@@ -10,7 +10,7 @@
 ///   3. Differential privacy: Laplace noise injection per epsilon budget
 ///   4. Temporal aggregation: minimum 1h window before emission
 ///
-/// govern lex esn/global/org/polylabs/telemetry
+/// govern lex global/org/polylabs/telemetry
 
 import polykit_identity from "./polykit_identity.fl"
 import polykit_governance from "./polykit_governance.fl"
@@ -30,7 +30,7 @@ data BlindedMetricBatch : app v1 {
     attested_at: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/telemetry
+    govern lex global/org/polylabs/telemetry
     cortex {
         redact [noise_seed_hash]
         obfuscate [blinded_product_id]
@@ -48,7 +48,7 @@ data BlindedMetric : app v1 {
     noised_value: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/telemetry
+    govern lex global/org/polylabs/telemetry
     cortex {
         infer on_read
     }
@@ -61,7 +61,7 @@ data TelemetryConfig : app v1 {
     metric_names: list<string>,
 }
     store kv
-    govern lex esn/global/org/polylabs/telemetry
+    govern lex global/org/polylabs/telemetry
     cortex {
         redact [noise_budget_epsilon]
         infer on_write
@@ -83,12 +83,12 @@ type CohortStatus = enum {
 
 stream blinded_telemetry_events: event<BlindedMetricBatch>
     retention 365d
-    consumers [streamsight, audit_trail]
+    consumers [observe, audit_trail]
     classify blinded_product_id: METADATA, cohort_size: METADATA
 
 stream telemetry_anomaly_events: event<BlindedMetricBatch>
     retention forever
-    consumers [streamsight, governance, alerting]
+    consumers [observe, governance, alerting]
 
 // ── Series ──────────────────────────────────────────────────────────
 
@@ -106,11 +106,11 @@ circuit blind_user_id(
     product_context: string,
 ) -> bytes(32)
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/telemetry
-    precision C
-    povc true
+    lex global/org/polylabs/telemetry
+    @precision C
+    @attested true
     constant_time true
-    observe metrics: [blind_derivations]
+    @observe metrics: [blind_derivations]
     invariant "deterministic" { blind_user_id(same_spark, same_ctx) == same_result }
     invariant "unlinkable" { blind_user_id(spark, ctx_a) != blind_user_id(spark, ctx_b) }
     property safety "no_spark_leak" { output contains no bits of spark_id }
@@ -122,7 +122,7 @@ circuit blind_user_id(
         assert id_files != id_git
         assert len(id_files) == 32
     }
-    kat_vector "hkdf_sha3_derivation" {
+    @golden_test "hkdf_sha3_derivation" {
         input: { spark_id: 0xAA * 32, product_context: "poly-test-v1" }
         expected: { len: 32, deterministic: true }
     }
@@ -144,9 +144,9 @@ circuit enforce_cohort(
     min_cohort_size: u32,
 ) -> (CohortStatus, bool)
     profile poly_framework_standard
-    lex esn/global/org/polylabs/telemetry
-    precision B
-    observe metrics: [cohort_checks, cohort_rejections]
+    lex global/org/polylabs/telemetry
+    @precision B
+    @observe metrics: [cohort_checks, cohort_rejections]
     monitor "cohort_rejection_rate" { cohort_rejections < 100/hr }
     invariant "min_50" { min_cohort_size >= 50 }
     invariant "honest_count" { active_user_count is real_count }
@@ -183,10 +183,10 @@ circuit inject_noise(
     epsilon_x1000: u64,
 ) -> u64
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/telemetry
-    precision C
+    lex global/org/polylabs/telemetry
+    @precision C
     constant_time true
-    observe metrics: [noise_injections, noise_magnitude]
+    @observe metrics: [noise_injections, noise_magnitude]
     invariant "epsilon_positive" { epsilon_x1000 > 0 }
     invariant "bounded_noise" { abs(noised - raw) <= 10 * sensitivity / epsilon_x1000 * 1000 }
     property safety "no_raw_leak" { output != raw_value when sensitivity > 0 }
@@ -195,7 +195,7 @@ circuit inject_noise(
         let noised = inject_noise(1000, 1, 1000)
         assert noised != 1000 or true
     }
-    kat_vector "laplace_mechanism" {
+    @golden_test "laplace_mechanism" {
         input: { raw_value: 1000, sensitivity: 1, epsilon_x1000: 1000 }
         expected: { bounded: true, deterministic: false }
     }
@@ -226,9 +226,9 @@ circuit enforce_aggregate_window(
     min_window_ms: u64,
 ) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/telemetry
-    precision B
-    observe metrics: [window_checks, window_rejections]
+    lex global/org/polylabs/telemetry
+    @precision B
+    @observe metrics: [window_checks, window_rejections]
     invariant "min_1h" { min_window_ms >= 3600000 }
     invariant "valid_range" { window_end_ms > window_start_ms }
     test golden "rejects_short_window" {
@@ -251,9 +251,9 @@ circuit compute_schema_hash(
     product_context: string,
 ) -> bytes(32)
     profile poly_framework_standard
-    lex esn/global/org/polylabs/telemetry
-    precision B
-    observe metrics: [schema_computations]
+    lex global/org/polylabs/telemetry
+    @precision B
+    @observe metrics: [schema_computations]
     invariant "deterministic" { same_input -> same_output }
     test golden "stable_hash" {
         let h1 = compute_schema_hash(["ops", "bytes"], "poly-files-v1")
@@ -279,15 +279,15 @@ circuit emit_blinded_telemetry(
     signing_sk: bytes(4896),
 ) -> option<BlindedMetricBatch>
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/telemetry {
+    lex global/org/polylabs/telemetry {
         governance hierarchical
         audit_trail true
     }
-    precision C
-    povc true
+    @precision C
+    @attested true
     constant_time true
-    streamsight true
-    observe metrics: [batches_emitted, batches_rejected, metrics_per_batch]
+    @observe true
+    @observe metrics: [batches_emitted, batches_rejected, metrics_per_batch]
     cortex on_block: telemetry_blocked_alert
     monitor "emission_rate" { batches_emitted < 100/hr }
     monitor "rejection_rate" { batches_rejected < 50/hr }
@@ -298,7 +298,7 @@ circuit emit_blinded_telemetry(
     property safety "emission_isolation" { no_cross_product_data }
     property safety "no_content_leak" { batch contains only numeric aggregates }
     property liveness "eventually_emits" { eventually(batches_emitted > 0) when cohort healthy }
-    esz_emit "verify/polykit_blind_telemetry.esz"
+    @serialize "verify/polykit_blind_telemetry.esz"
     ai_feed full_escir true, optimized_ir true, optimization_metadata true
     meters [compute_cycles, memory_bytes, bandwidth_bytes]
     wasm_abi [eslite_insert, stream_emit, now]

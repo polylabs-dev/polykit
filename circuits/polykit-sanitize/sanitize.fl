@@ -13,7 +13,7 @@ component polykit_sanitize version "0.2.0" {
 
 profile sanitize_defaults {
     lex polykit/sanitize
-    precision A
+    @precision A
 }
 
 // ── Data Types ──────────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ data Detection : sanitize v1 {
     confidence: u64,
 }
     encode
-    observe metrics [data_type, confidence] level adaptive
+    @observe metrics [data_type, confidence] level adaptive
 
 data AuditEntry : sanitize v1 {
     timestamp_ms: u64,
@@ -70,7 +70,7 @@ data AuditEntry : sanitize v1 {
         fields [field_path, witness_hash, timestamp_ms]
     }
     attest {
-        povc true
+        @attested true
         anchor_field witness_hash
     }
 
@@ -81,7 +81,7 @@ data SanitizationResult : sanitize v1 {
     regulations_triggered: bytes(64),
 }
     encode
-    observe metrics [detections_count] level adaptive
+    @observe metrics [detections_count] level adaptive
 
 // ── Pipeline Graph ──────────────────────────────────────────────────────────
 
@@ -108,8 +108,8 @@ circuit sanitize(
     input: bytes(65536)
 ) -> SanitizationResult
     @sanitize_defaults
-    povc true
-    observe metrics: [sanitizations_total, detections_count, regulations_triggered]
+    @attested true
+    @observe metrics: [sanitizations_total, detections_count, regulations_triggered]
     test golden {
         input { input: "John Smith SSN 123-45-6789 email john@example.com" }
         assert { result.detections_count >= 2 }
@@ -132,7 +132,7 @@ circuit detect_only(
     input: bytes(65536)
 ) -> list<Detection>
     @sanitize_defaults
-    observe metrics: [detect_only_calls, detections_found]
+    @observe metrics: [detect_only_calls, detections_found]
     test golden {
         input { input: "SSN 123-45-6789" }
         assert { result.len >= 1 }
@@ -143,7 +143,7 @@ circuit detect_only(
 
 circuit detect_pii(input: bytes(65536)) -> list<Detection>
     lex polykit/sanitize
-    precision A
+    @precision A
 {
     let results = []
     if pattern_match(input, "\\d{3}-\\d{2}-\\d{4}") {
@@ -170,7 +170,7 @@ circuit transform_values(
     detections: list<Detection>
 ) -> bytes(65536)
     lex polykit/sanitize
-    precision A
+    @precision A
 {
     let result = input
     for det in detections {
@@ -183,7 +183,7 @@ circuit create_audit_records(
     detections: list<Detection>
 ) -> list<AuditEntry>
     lex polykit/sanitize
-    precision A
+    @precision A
 {
     let entries = []
     for det in detections {
@@ -203,7 +203,7 @@ circuit create_audit_records(
 
 circuit aggregate_regulations(detections: list<Detection>) -> bytes(64)
     lex polykit/sanitize
-    precision C
+    @precision C
 {
     let regs = ""
     for det in detections {
@@ -226,7 +226,7 @@ stream audit_events {
 stream sanitization_metrics {
     topic "lex://estream/apps/{app_namespace}/sanitization/metrics"
     retention 365d
-    consumers [console, streamsight]
+    consumers [console, observe]
 
     event scan_completed {
         detections_count: u32,

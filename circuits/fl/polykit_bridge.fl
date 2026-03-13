@@ -10,7 +10,7 @@
 ///   - Revocable — deleting the bridge key severs all cross-product linkage
 ///   - Zero subpoena surface — bridge exists only in client-side ESLite
 ///
-/// govern lex esn/global/org/polylabs/bridge
+/// govern lex global/org/polylabs/bridge
 
 import polykit_identity from "./polykit_identity.fl"
 import polykit_zero_linkage from "./polykit_zero_linkage.fl"
@@ -24,7 +24,7 @@ data BridgeConfig : polykit v1 {
     revocable: bool,
 }
     store kv
-    govern lex esn/global/org/polylabs/bridge
+    govern lex global/org/polylabs/bridge
     cortex {
         redact [bridge_key]
         infer on_write
@@ -37,7 +37,7 @@ data BridgeAggregate : polykit v1 {
     timestamp_ms: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/bridge
+    govern lex global/org/polylabs/bridge
     cortex {
         infer on_read
     }
@@ -50,7 +50,7 @@ data BridgeDashboard : polykit v1 {
     aggregates: list<BridgeAggregate>,
 }
     store kv
-    govern lex esn/global/org/polylabs/bridge
+    govern lex global/org/polylabs/bridge
     cortex {
         redact [bridge_id]
         infer on_read
@@ -83,10 +83,10 @@ circuit create_bridge(
     products: list<string>,
 ) -> BridgeConfig
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/bridge
-    precision C
+    lex global/org/polylabs/bridge
+    @precision C
     constant_time true
-    observe metrics: [bridges_created, products_linked]
+    @observe metrics: [bridges_created, products_linked]
     monitor "bridge_creation_rate" { bridges_created < 10 per 3600s }
     invariant "seed_entropy" { len(master_seed) >= 32 }
     invariant "products_nonempty" { len(products) >= 2 }
@@ -123,10 +123,10 @@ circuit create_bridge(
 /// After revocation, the bridge_key is zeroed and the config is deleted from ESLite.
 circuit revoke_bridge(config: BridgeConfig) -> bool
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/bridge
-    precision C
+    lex global/org/polylabs/bridge
+    @precision C
     constant_time true
-    observe metrics: [bridges_revoked]
+    @observe metrics: [bridges_revoked]
     monitor "revocation_rate" { bridges_revoked < 10 per 3600s }
     invariant "bridge_revocable" { config.revocable == true }
     invariant "bridge_key_present" { len(config.bridge_key) == 32 }
@@ -159,9 +159,9 @@ circuit aggregate_product_metrics(
     metrics: list<BridgeAggregate>,
 ) -> list<BridgeAggregate>
     profile poly_framework_standard
-    lex esn/global/org/polylabs/bridge
-    precision B
-    observe metrics: [aggregations_performed, metrics_ingested]
+    lex global/org/polylabs/bridge
+    @precision B
+    @observe metrics: [aggregations_performed, metrics_ingested]
     monitor "aggregation_volume" { metrics_ingested < 10000 per 3600s }
     invariant "product_linked" { contains(config.linked_products, product_name) }
     invariant "metrics_nonempty" { len(metrics) > 0 }
@@ -194,9 +194,9 @@ circuit aggregate_product_metrics(
 /// Build a unified dashboard view from all linked product aggregates.
 circuit build_dashboard(config: BridgeConfig) -> BridgeDashboard
     profile poly_framework_standard
-    lex esn/global/org/polylabs/bridge
-    precision B
-    observe metrics: [dashboard_builds, products_aggregated]
+    lex global/org/polylabs/bridge
+    @precision B
+    @observe metrics: [dashboard_builds, products_aggregated]
     monitor "dashboard_build_rate" { dashboard_builds < 60 per 3600s }
     invariant "bridge_active" { len(config.bridge_key) == 32 and config.bridge_key != zero_bytes(32) }
     property safety "aggregates_only_in_dashboard" { no_content_in_output }

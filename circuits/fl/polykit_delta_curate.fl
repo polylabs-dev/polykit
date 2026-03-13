@@ -20,7 +20,7 @@ data DeltaRecord : polykit v1 {
     is_snapshot: bool,
 }
     store kv
-    govern lex esn/global/org/polylabs
+    govern lex global/org/polylabs
     cortex {
         infer on_write,
         on_anomaly alert "delta-integrity-team"
@@ -32,7 +32,7 @@ data ReconstructedRecord : polykit v1 {
     delta_count: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs
+    govern lex global/org/polylabs
     cortex {
         infer on_write
     }
@@ -45,12 +45,12 @@ circuit delta_encode(current: bytes(4096), previous: bytes(4096), epoch: u64) ->
         bitmask_width 64,
         proof_mode exclusion,
     }
-    observe metrics: [delta_ratio, epoch_snapshots, bitmask_density]
+    @observe metrics: [delta_ratio, epoch_snapshots, bitmask_density]
     monitor "compression_ratio" { delta_ratio > 5 }
     fuzz_target
     invariant "lossless" { decode(encode(record)) == record }
     property safety "lossless_roundtrip" { decode(encode(x)) == x }
-    esz_emit "verify/polykit_delta_curate.esz"
+    @serialize "verify/polykit_delta_curate.esz"
     test golden "delta_encode_basic" {
         let current = bytes(4096, 0xAA)
         let previous = bytes(4096, 0xBB)
@@ -74,7 +74,7 @@ circuit delta_encode(current: bytes(4096), previous: bytes(4096), epoch: u64) ->
 // --- Reconstruct a record from snapshot + delta chain ---
 circuit delta_decode(snapshot: bytes(4096), deltas: [DeltaRecord; 100]) -> ReconstructedRecord
     profile poly_framework_standard
-    observe metrics: [reconstruction_ops]
+    @observe metrics: [reconstruction_ops]
     invariant "reconstruction_deterministic" { decode(s, d) == decode(s, d) }
 {
     let data = apply_deltas(snapshot, deltas)
@@ -85,7 +85,7 @@ circuit delta_decode(snapshot: bytes(4096), deltas: [DeltaRecord; 100]) -> Recon
 // --- Verify an exclusion proof (field did not change in range) ---
 circuit verify_exclusion(bitmasks: [u64; 100], field_index: u64, start_epoch: u64, end_epoch: u64) -> bool
     profile poly_framework_standard
-    observe metrics: [exclusion_proofs_verified]
+    @observe metrics: [exclusion_proofs_verified]
     invariant "field_index_valid" { field_index < 64 }
     property liveness "curation_progress" { end_epoch > start_epoch }
 {

@@ -12,7 +12,7 @@ component polykit_eslm_classify version "0.2.0" {
 
 profile classify_defaults {
     lex polykit/eslm/classify
-    precision B
+    @precision B
 }
 
 // ── Data Types ──────────────────────────────────────────────────────────────
@@ -25,7 +25,7 @@ data ClassificationSuggestion : eslm v1 {
     timestamp_ms: u64,
 }
     encode
-    observe metrics [tag, confidence] level adaptive
+    @observe metrics [tag, confidence] level adaptive
     cortex {
         expose [tag, confidence, alternatives]
         infer on_write
@@ -68,7 +68,7 @@ circuit classify_content(
     metadata: bytes(512)
 ) -> ClassificationSuggestion
     @classify_defaults
-    observe metrics: [classifications_total, auto_accept_count, review_required_count]
+    @observe metrics: [classifications_total, auto_accept_count, review_required_count]
     test golden {
         input { content_sample: "fn main() { println!(\"hello\"); }", filename: "main.rs", metadata: "{}" }
         assert { result.tag.len > 0 }
@@ -92,7 +92,7 @@ circuit submit_human_feedback(
     feedback: HumanFeedback
 ) -> bool
     @classify_defaults
-    observe metrics: [feedback_submitted, corrections_count]
+    @observe metrics: [feedback_submitted, corrections_count]
     @guard(block_on: reviewer_unauthorized)
     test golden {
         input {
@@ -114,7 +114,7 @@ circuit submit_human_feedback(
 /// Get current confidence thresholds for auto-accept/review/reject.
 circuit get_confidence_thresholds() -> ConfidenceThresholds
     @classify_defaults
-    observe metrics: [threshold_lookups]
+    @observe metrics: [threshold_lookups]
 {
     ConfidenceThresholds {
         auto_accept: 8500,

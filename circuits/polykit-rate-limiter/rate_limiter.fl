@@ -11,7 +11,7 @@ component polykit_rate_limiter version "0.2.0" {
 
 profile ratelimit_defaults {
     lex polykit/ratelimit
-    precision A
+    @precision A
 }
 
 // ── Data Types ──────────────────────────────────────────────────────────────
@@ -63,7 +63,7 @@ circuit check_rate(
 ) -> RateCheckResult
     @ratelimit_defaults
     @guard(block_on: tier_invalid)
-    observe metrics: [rate_checks, rate_denials]
+    @observe metrics: [rate_checks, rate_denials]
     test golden {
         input { user_id: bytes(16), operation: "vcs.push", tier: "free" }
     }
@@ -102,7 +102,7 @@ circuit record_operation(
     operation: bytes(64)
 ) -> bool
     @ratelimit_defaults
-    observe metrics: [operations_recorded]
+    @observe metrics: [operations_recorded]
 {
     let key = concat(user_id, ":", operation)
     let window = kv_get("ratelimit", key)

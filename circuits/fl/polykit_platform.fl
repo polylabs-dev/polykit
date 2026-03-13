@@ -50,8 +50,8 @@ platform polykit_framework v1 {
 
     bind polykit_li_effects -> li_engine
 
-    streamsight true
-    esz_emit "verify/polykit_platform.esz"
+    @observe true
+    @serialize "verify/polykit_platform.esz"
     ai_feed full_escir true, optimized_ir true, optimization_metadata true
 
     target wasm_client

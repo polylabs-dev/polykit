@@ -10,7 +10,7 @@ data ClassificationSuggestion : polykit v1 {
     alternatives: [Alternative; 5],
 }
     store kv
-    govern lex esn/global/org/polylabs
+    govern lex global/org/polylabs
     cortex {
         infer on_write,
         on_anomaly alert "li-classification-team"
@@ -21,7 +21,7 @@ data Alternative : polykit v1 {
     confidence: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs
+    govern lex global/org/polylabs
 
 data HumanFeedback : polykit v1 {
     sample_hash: bytes(32),
@@ -31,7 +31,7 @@ data HumanFeedback : polykit v1 {
     timestamp_ms: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs
+    govern lex global/org/polylabs
     cortex {
         redact [reviewer_hash],
         infer on_write
@@ -43,7 +43,7 @@ data ConfidenceThresholds : polykit v1 {
     auto_reject: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs
+    govern lex global/org/polylabs
 
 stream classification_events: event<ClassificationSuggestion>
     classify tag {
@@ -57,7 +57,7 @@ stream classification_events: event<ClassificationSuggestion>
 // --- Auto-classify content using LI Effects ---
 circuit classify_content(content: bytes, filename: string, metadata: bytes(256)) -> ClassificationSuggestion
     profile poly_framework_standard
-    observe metrics: [classifications, confidence_distribution, auto_accept_rate]
+    @observe metrics: [classifications, confidence_distribution, auto_accept_rate]
     monitor "confidence_drift" { avg_confidence > 0.60 }
     cortex on_anomaly: misclassification_alert
     property safety "classification_accuracy" { confidence >= min_threshold }
@@ -79,7 +79,7 @@ circuit classify_content(content: bytes, filename: string, metadata: bytes(256))
 circuit submit_feedback(feedback: HumanFeedback) -> bool
     profile poly_framework_standard
     wasm_abi [eslite_insert, stream_emit]
-    observe metrics: [feedback_submitted, correction_rate]
+    @observe metrics: [feedback_submitted, correction_rate]
 {
     let stored = store(feedback.sample_hash, feedback)
     emit(classification_events, feedback)
@@ -89,7 +89,7 @@ circuit submit_feedback(feedback: HumanFeedback) -> bool
 // --- Get current confidence thresholds ---
 circuit get_thresholds() -> ConfidenceThresholds
     profile poly_framework_standard
-    observe metrics: [threshold_queries]
+    @observe metrics: [threshold_queries]
     wasm_abi [eslite_query]
 {
     let thresholds = load("confidence_thresholds")

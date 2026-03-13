@@ -18,7 +18,7 @@ data UsComplianceResult : polykit v1 {
     audit_hash: bytes(32),
 }
     store kv
-    govern lex esn/region/us/org/polylabs
+    govern lex region/us/org/polylabs
     cortex {
         redact [ccpa_status, soc2_status],
         infer on_write,
@@ -31,7 +31,7 @@ data UsDataRequest : polykit v1 {
     data_category: bytes(16),
 }
     store kv
-    govern lex esn/region/us/org/polylabs
+    govern lex region/us/org/polylabs
     cortex {
         redact [subject_id],
         infer on_write,
@@ -44,7 +44,7 @@ data UsDataResponse : polykit v1 {
     records_affected: u64,
 }
     store kv
-    govern lex esn/region/us/org/polylabs
+    govern lex region/us/org/polylabs
     cortex {
         infer on_write
     }
@@ -56,7 +56,7 @@ stream us_compliance_events: event<UsComplianceResult>
 // --- US regional compliance check ---
 @guard(block_on: ccpa_violation)
 circuit us_compliance_check(subject: bytes(32), data: bytes(4096)) -> UsComplianceResult
-    lex esn/region/us/org/polylabs {
+    lex region/us/org/polylabs {
         governance hierarchical
         audit_trail true
         sovereignty us
@@ -69,9 +69,9 @@ circuit us_compliance_check(subject: bytes(32), data: bytes(4096)) -> UsComplian
             share [compliance_status, audit_hash, metrics_summary]
             redact [subject_id, pii_data, raw_content, ip_address]
     }
-    precision B
+    @precision B
     constant_time true
-    observe metrics: [compliance_checks, ccpa_requests, soc2_audits]
+    @observe metrics: [compliance_checks, ccpa_requests, soc2_audits]
     cortex policy: ccpa_compliance
     cortex on_anomaly: ccpa_violation_alert
     monitor "compliance_rate" { compliant_checks / total_checks > 0.99 }
@@ -97,15 +97,15 @@ circuit us_compliance_check(subject: bytes(32), data: bytes(4096)) -> UsComplian
 // --- CCPA data subject request (right to know, delete, opt-out) ---
 // Request types: 1 = right_to_know, 2 = right_to_delete, 3 = right_to_opt_out
 circuit ccpa_data_request(req: UsDataRequest) -> UsDataResponse
-    lex esn/region/us/org/polylabs {
+    lex region/us/org/polylabs {
         governance hierarchical
         audit_trail true
         sovereignty us
         compliance [ccpa]
     }
-    precision A
+    @precision A
     sanitize pii_fields [subject_id], retention 7y
-    observe metrics: [ccpa_requests_by_type, fulfillment_time_ms]
+    @observe metrics: [ccpa_requests_by_type, fulfillment_time_ms]
     invariant "request_fulfilled" { fulfilled == true }
     monitor "fulfillment_sla" { fulfillment_time_ms < 30000 }
 {

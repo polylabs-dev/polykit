@@ -11,7 +11,7 @@
 ///   3. Metering isolation:   Per-product independent metering under own user_id
 ///   4. Telemetry isolation:  Per-product StreamSight lex namespaces
 ///
-/// govern lex esn/global/org/polylabs/zero_linkage
+/// govern lex global/org/polylabs/zero_linkage
 
 import polykit_identity from "./polykit_identity.fl"
 
@@ -25,7 +25,7 @@ data ProductContext : polykit v1 {
     telemetry_context: string,
 }
     store kv
-    govern lex esn/global/org/polylabs/zero_linkage
+    govern lex global/org/polylabs/zero_linkage
     cortex {
         infer on_write
     }
@@ -40,7 +40,7 @@ data IsolationProof : polykit v1 {
     proof_hash: bytes(32),
 }
     store kv
-    govern lex esn/global/org/polylabs/zero_linkage
+    govern lex global/org/polylabs/zero_linkage
     cortex {
         infer on_read
         on_anomaly alert "privacy-team"
@@ -53,7 +53,7 @@ data ProductKeys : polykit v1 {
     encryption_pk: bytes(1568),
 }
     store kv
-    govern lex esn/global/org/polylabs/zero_linkage
+    govern lex global/org/polylabs/zero_linkage
     cortex {
         redact [signing_sk, encryption_sk]
         infer on_write
@@ -87,17 +87,17 @@ circuit derive_product_keys(
     product_context: ProductContext,
 ) -> ProductKeys
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/zero_linkage
-    precision C
+    lex global/org/polylabs/zero_linkage
+    @precision C
     constant_time true
-    observe metrics: [product_key_derivations, hkdf_ops]
+    @observe metrics: [product_key_derivations, hkdf_ops]
     monitor "derivation_latency" { derivation_time_ms < 50 }
     invariant "seed_minimum_entropy" { len(master_seed) >= 32 }
     invariant "context_nonempty" { len(product_context.hkdf_context) > 0 }
     property safety "context_isolation" { derive(seed, ctx_a) != derive(seed, ctx_b) when ctx_a != ctx_b }
     property safety "no_seed_in_output" { output contains no bits of master_seed }
     fuzz_target
-    kat_vector "hkdf_product_derivation" {
+    @golden_test "hkdf_product_derivation" {
         input: { master_seed: 0xAA * 32, hkdf_context: "poly-files-v1" }
         expected: { user_id_len: 16, signing_pk_len: 2592, encryption_pk_len: 1568, deterministic: true }
     }
@@ -138,9 +138,9 @@ circuit derive_product_keys(
 /// All four dimensions must be true for isolation to hold.
 circuit verify_isolation(proof: IsolationProof) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/zero_linkage
-    precision B
-    observe metrics: [isolation_verifications, isolation_failures]
+    lex global/org/polylabs/zero_linkage
+    @precision B
+    @observe metrics: [isolation_verifications, isolation_failures]
     monitor "isolation_failure_rate" { isolation_failures < 1 per 3600s }
     invariant "distinct_products" { proof.product_a_context != proof.product_b_context }
     invariant "proof_hash_valid" { len(proof.proof_hash) == 32 }
@@ -179,9 +179,9 @@ circuit verify_isolation(proof: IsolationProof) -> bool
 /// Deterministically derives all namespace strings from the product name.
 circuit register_product(name: string) -> ProductContext
     profile poly_framework_standard
-    lex esn/global/org/polylabs/zero_linkage
-    precision B
-    observe metrics: [products_registered]
+    lex global/org/polylabs/zero_linkage
+    @precision B
+    @observe metrics: [products_registered]
     monitor "product_registration_rate" { products_registered < 50 per 3600s }
     invariant "name_nonempty" { len(name) > 0 }
     invariant "name_lowercase" { name == lowercase(name) }
@@ -212,10 +212,10 @@ circuit build_isolation_proof(
     ctx_b: ProductContext,
 ) -> IsolationProof
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/zero_linkage
-    precision C
+    lex global/org/polylabs/zero_linkage
+    @precision C
     constant_time true
-    observe metrics: [proofs_built]
+    @observe metrics: [proofs_built]
     invariant "distinct_contexts" { ctx_a.product_name != ctx_b.product_name }
     property safety "proof_binding" { proof_hash binds all four dimensions }
     fuzz_target

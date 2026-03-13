@@ -12,7 +12,7 @@ component polykit_telemetry version "0.2.0" {
 
 profile telemetry_defaults {
     lex polykit/telemetry
-    precision B
+    @precision B
 }
 
 // ── Data Types ──────────────────────────────────────────────────────────────
@@ -25,7 +25,7 @@ data TelemetryEvent : telemetry v1 {
     circuit: bytes(128),
 }
     encode
-    observe metrics [metric, circuit] level adaptive
+    @observe metrics [metric, circuit] level adaptive
 
 type DeviationSeverity = enum {
     Deviation,
@@ -42,7 +42,7 @@ data Deviation : telemetry v1 {
     severity: u8,
 }
     encode
-    observe metrics [metric, severity] level adaptive
+    @observe metrics [metric, severity] level adaptive
     cortex {
         expose [metric, z_score, observed, baseline]
         infer on_write
@@ -66,7 +66,7 @@ circuit emit_gauge(
     circuit_name: bytes(128)
 ) -> TelemetryEvent
     @telemetry_defaults
-    observe metrics: [gauges_emitted]
+    @observe metrics: [gauges_emitted]
     test golden {
         input { metric: "push_latency_ms", value: 42, labels: "{}", circuit_name: "poly-git.push" }
         assert { result.metric == "push_latency_ms" }
@@ -90,7 +90,7 @@ circuit emit_counter(
     circuit_name: bytes(128)
 ) -> TelemetryEvent
     @telemetry_defaults
-    observe metrics: [counters_emitted]
+    @observe metrics: [counters_emitted]
 {
     TelemetryEvent {
         metric: metric,
@@ -107,7 +107,7 @@ circuit emit_event(
     payload: bytes(4096)
 ) -> TelemetryEvent
     @telemetry_defaults
-    observe metrics: [events_emitted]
+    @observe metrics: [events_emitted]
 {
     TelemetryEvent {
         metric: event_type,
@@ -125,8 +125,8 @@ circuit check_baseline(
     value: u64
 ) -> BaselineCheck
     @telemetry_defaults
-    precision A
-    observe metrics: [baseline_checks, deviations_detected]
+    @precision A
+    @observe metrics: [baseline_checks, deviations_detected]
     test golden {
         input { metric: "push_latency_ms", value: 42 }
     }
@@ -148,7 +148,7 @@ stream telemetry_events {
     topic "lex://estream/apps/{app_namespace}/telemetry"
     payload TelemetryEvent
     retention 7d
-    consumers [streamsight, console]
+    consumers [observe, console]
 
     @streamsight_filter baseline
     @streamsight_sensitivity 2.5

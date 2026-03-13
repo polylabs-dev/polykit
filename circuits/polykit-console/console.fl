@@ -13,7 +13,7 @@ component polykit_console version "0.2.0" {
 
 profile console_defaults {
     lex polykit/console
-    precision C
+    @precision C
 }
 
 // ── Data Types ──────────────────────────────────────────────────────────────
@@ -47,7 +47,7 @@ data WidgetPayload : console v1 {
     timestamp_ms: u64,
 }
     encode
-    observe metrics [widget_type, dirty] level adaptive
+    @observe metrics [widget_type, dirty] level adaptive
 
 data WidgetEvent : console v1 {
     event_type: u8,
@@ -83,7 +83,7 @@ graph widget_registry {
         tier ddr   { capacity: 500 }
     }
 
-    observe widget_registry: [render_count, data_freshness] threshold: {
+    @observe widget_registry: [render_count, data_freshness] threshold: {
         anomaly_score 0.8
         baseline_window 100
     }
@@ -109,8 +109,8 @@ circuit check_access(
     required_roles: list<bytes(32)>
 ) -> bool
     @console_defaults
-    precision A
-    observe metrics: [access_checks, access_denials]
+    @precision A
+    @observe metrics: [access_checks, access_denials]
     test golden {
         input { user_roles: ["poly-git-writer", "poly-git-reader"], required_roles: ["poly-git-reader"] }
         assert { result == true }
@@ -162,7 +162,7 @@ circuit process_widgets(
     events: list<WidgetEvent>
 ) -> list<WidgetPayload>
     @console_defaults
-    observe metrics: [widgets_processed, events_drained]
+    @observe metrics: [widgets_processed, events_drained]
 {
     let widgets = graph_query(widget_registry, "all")
     let results = []
@@ -179,7 +179,7 @@ circuit process_single_widget(
     events: list<WidgetEvent>
 ) -> WidgetPayload
     lex polykit/console
-    precision C
+    @precision C
 {
     let relevant_events = filter_events(events, widget.widget_id)
     let updated_data = apply_events(widget.data_json, relevant_events)
@@ -199,7 +199,7 @@ circuit emit_widget_event(
     source_widget: bytes(64)
 ) -> WidgetEvent
     @console_defaults
-    observe metrics: [events_emitted]
+    @observe metrics: [events_emitted]
 {
     WidgetEvent {
         event_type: event_type,
@@ -213,7 +213,7 @@ circuit emit_widget_event(
 
 circuit filter_events(events: list<WidgetEvent>, widget_id: bytes(64)) -> list<WidgetEvent>
     lex polykit/console
-    precision C
+    @precision C
 {
     let filtered = []
     for e in events {
@@ -226,14 +226,14 @@ circuit filter_events(events: list<WidgetEvent>, widget_id: bytes(64)) -> list<W
 
 circuit apply_events(data: bytes(65536), events: list<WidgetEvent>) -> bytes(65536)
     lex polykit/console
-    precision C
+    @precision C
 {
     data
 }
 
 circuit merge_stream_data(widget_data: bytes(65536), stream_data: bytes(65536)) -> bytes(65536)
     lex polykit/console
-    precision C
+    @precision C
 {
     widget_data
 }
@@ -250,7 +250,7 @@ stream widget_events {
 stream widget_metrics {
     topic "lex://estream/apps/{app_namespace}/console/metrics"
     retention 30d
-    consumers [streamsight, console]
+    consumers [observe, console]
 
     event widget_rendered {
         widget_id: bytes(64),

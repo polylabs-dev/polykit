@@ -28,14 +28,14 @@ data DimensionValues : polykit v1 {
     mpc_sessions: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/metering
+    govern lex global/org/polylabs/metering
 
 data TierLimits : polykit v1 {
     tier_name: string,
     limits: DimensionValues,
 }
     store kv
-    govern lex esn/global/org/polylabs/metering
+    govern lex global/org/polylabs/metering
 
 data MeteringRecord : polykit v1 {
     user_id: bytes(16),
@@ -44,7 +44,7 @@ data MeteringRecord : polykit v1 {
     timestamp_ms: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/metering
+    govern lex global/org/polylabs/metering
     cortex {
         infer on_write
         on_anomaly alert "metering-team"
@@ -54,7 +54,7 @@ data MeteringRecord : polykit v1 {
 
 stream metering_events: event<MeteringRecord>
     retention 90d
-    consumers [streamsight, billing]
+    consumers [observe, billing]
     | throttle 1000/s burst 2000
 
 // ── Series ──────────────────────────────────────────────────────────
@@ -70,7 +70,7 @@ series metering_series {
 circuit record_usage(user_id: bytes(16), operation: string, dims: DimensionValues) -> MeteringRecord
     profile poly_framework_standard
     meters [compute_cycles, memory_bytes]
-    observe metrics: [metering_records, dimension_totals]
+    @observe metrics: [metering_records, dimension_totals]
     monitor "metering_throughput" { metering_records > 0 }
     property safety "metering_non_negative" { dims.executions >= 0 and dims.hashes >= 0 }
     property liveness "records_processed" { eventually(metering_records > 0) }
@@ -98,7 +98,7 @@ circuit record_usage(user_id: bytes(16), operation: string, dims: DimensionValue
 @guard(block_on: tier_limit_exceeded)
 circuit check_limits(current: DimensionValues, tier: TierLimits) -> [MeteringDimension; 8]
     profile poly_framework_standard
-    observe metrics: [limit_checks, limit_violations]
+    @observe metrics: [limit_checks, limit_violations]
     invariant "no_false_positives" { violation implies current_dim > limit_dim }
     property safety "metering_non_negative" { all dimensions >= 0 }
 {
@@ -110,7 +110,7 @@ circuit check_limits(current: DimensionValues, tier: TierLimits) -> [MeteringDim
 // --- Get accumulated usage for a user ---
 circuit get_usage_summary(user_id: bytes(16)) -> DimensionValues
     profile poly_framework_standard
-    observe metrics: [usage_queries]
+    @observe metrics: [usage_queries]
     wasm_abi [eslite_query]
 {
     load(user_id)

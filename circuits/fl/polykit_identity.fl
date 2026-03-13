@@ -24,7 +24,7 @@ data DerivedKeys : polykit v1 {
     encryption_secret_key: bytes(3168),
 }
     store kv
-    govern lex esn/global/org/polylabs/identity
+    govern lex global/org/polylabs/identity
     cortex {
         redact [signing_secret_key, encryption_secret_key]
         infer on_write
@@ -35,7 +35,7 @@ data EncapsulatedKey : polykit v1 {
     shared_secret: bytes(32),
 }
     store kv
-    govern lex esn/global/org/polylabs/identity
+    govern lex global/org/polylabs/identity
     cortex {
         redact [shared_secret]
     }
@@ -60,16 +60,16 @@ series identity_derivations {
 @guard(block_on: key_derivation_failed)
 circuit derive_keys(master_seed: MasterSeed, hkdf_context: bytes(64)) -> DerivedKeys
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/identity
+    lex global/org/polylabs/identity
     constant_time true
-    observe metrics: [key_derivations, hkdf_ops, signing_key_generations]
+    @observe metrics: [key_derivations, hkdf_ops, signing_key_generations]
     monitor "derivation_latency" { derivation_time_ms < 50 }
     invariant "seed_minimum_entropy" { len(master_seed) >= 32 }
     invariant "key_isolation" { signing_seed != encryption_seed }
     property liveness "keys_eventually_derived" { eventually(key_derivations > 0) }
     ai_feed full_escir true, optimized_ir true, optimization_metadata true
     fuzz_target
-    kat_vector "spark_derivation_v1" {
+    @golden_test "spark_derivation_v1" {
         input master_seed = 0x[0000000000000000000000000000000000000000000000000000000000000001]
         input hkdf_context = 0x[706f6c792d646174612d7631]
         expect user_id != 0x[00000000000000000000000000000000]
@@ -103,7 +103,7 @@ circuit derive_keys(master_seed: MasterSeed, hkdf_context: bytes(64)) -> Derived
 circuit sign_message(secret_key: bytes(4896), message: bytes) -> bytes(4627)
     profile poly_framework_sensitive
     constant_time true
-    observe metrics: [sign_ops]
+    @observe metrics: [sign_ops]
     invariant "signature_deterministic" { sign(sk, msg) == sign(sk, msg) }
     property safety "signature_requires_valid_key" { output != zero_bytes implies valid_key(secret_key) }
     fuzz_target
@@ -114,7 +114,7 @@ circuit sign_message(secret_key: bytes(4896), message: bytes) -> bytes(4627)
 // --- Verify ML-DSA-87 signature ---
 circuit verify_signature(public_key: bytes(2592), message: bytes, signature: bytes(4627)) -> bool
     profile poly_framework_standard
-    observe metrics: [verify_ops, verify_failures]
+    @observe metrics: [verify_ops, verify_failures]
     property safety "no_false_positive_verification" { verify(pk, msg, sig) implies valid_sig(pk, msg, sig) }
     fuzz_target
 {
@@ -125,7 +125,7 @@ circuit verify_signature(public_key: bytes(2592), message: bytes, signature: byt
 circuit encapsulate_key(recipient_pk: bytes(1568)) -> EncapsulatedKey
     profile poly_framework_sensitive
     constant_time true
-    observe metrics: [encapsulation_ops]
+    @observe metrics: [encapsulation_ops]
     property safety "shared_secret_fresh" { each invocation produces unique shared_secret }
     fuzz_target
 {
@@ -140,7 +140,7 @@ circuit encapsulate_key(recipient_pk: bytes(1568)) -> EncapsulatedKey
 circuit decapsulate_key(secret_key: bytes(3168), ciphertext: bytes(1568)) -> bytes(32)
     profile poly_framework_sensitive
     constant_time true
-    observe metrics: [decapsulation_ops]
+    @observe metrics: [decapsulation_ops]
     property safety "decapsulation_matches_encapsulation" { decaps(sk, encaps(pk)) == shared_secret }
     fuzz_target
 {
@@ -150,7 +150,7 @@ circuit decapsulate_key(secret_key: bytes(3168), ciphertext: bytes(1568)) -> byt
 // --- Compute user_id from public key ---
 circuit derive_user_id(signing_public_key: bytes(2592)) -> UserId
     profile poly_framework_standard
-    observe metrics: [user_id_derivations]
+    @observe metrics: [user_id_derivations]
     fuzz_target
 {
     let pk_hash = sha3_256(signing_public_key)

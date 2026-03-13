@@ -20,7 +20,7 @@ component polykit_identity version "0.2.0" {
 
 profile identity_defaults {
     lex polykit/identity
-    precision A
+    @precision A
     constant_time true
 }
 
@@ -112,7 +112,7 @@ circuit create_app_context(
     lex_namespace: bytes(128)
 ) -> AppContext
     @identity_defaults
-    observe metrics: [app_contexts_created]
+    @observe metrics: [app_contexts_created]
     test golden {
         input { app_id: "polydata", hkdf_context: "poly-data-v1", lex_namespace: "polylabs.data" }
         expect { app_id: "polydata" }
@@ -133,7 +133,7 @@ circuit derive_keys(
 ) -> DerivedKeys
     @identity_defaults
     @guard(block_on: seed_invalid)
-    observe metrics: [key_derivations_total]
+    @observe metrics: [key_derivations_total]
     invariant "seed_length" { master_seed.len >= 32 }
     test golden {
         input { master_seed: bytes(32), hkdf_context: "poly-data-v1" }
@@ -170,7 +170,7 @@ circuit derive_user_id(
     signing_public_key: bytes(2592)
 ) -> bytes(16)
     @identity_defaults
-    observe metrics: [user_id_derivations]
+    @observe metrics: [user_id_derivations]
     test golden {
         input { signing_public_key: bytes(2592) }
         assert { result.len == 16 }
@@ -186,7 +186,7 @@ circuit sign_message(
     message: bytes(65536)
 ) -> bytes(4627)
     @identity_defaults
-    observe metrics: [signatures_created]
+    @observe metrics: [signatures_created]
     test golden {
         input { secret_key: bytes(4896), message: "test" }
         assert { result.len == 4627 }
@@ -202,7 +202,7 @@ circuit verify_signature(
     signature: bytes(4627)
 ) -> bool
     @identity_defaults
-    observe metrics: [signature_verifications, signature_failures]
+    @observe metrics: [signature_verifications, signature_failures]
     test golden {
         input { public_key: bytes(2592), message: "test", signature: bytes(4627) }
     }
@@ -215,7 +215,7 @@ circuit encapsulate_key(
     recipient_public_key: bytes(1568)
 ) -> EncapsulatedKey
     @identity_defaults
-    observe metrics: [encapsulations_total]
+    @observe metrics: [encapsulations_total]
     test golden {
         input { recipient_public_key: bytes(1568) }
         assert { result.shared_secret.len == 32 }
@@ -234,7 +234,7 @@ circuit decapsulate_key(
     ciphertext: bytes(1568)
 ) -> bytes(32)
     @identity_defaults
-    observe metrics: [decapsulations_total]
+    @observe metrics: [decapsulations_total]
     test golden {
         input { secret_key: bytes(3168), ciphertext: bytes(1568) }
         assert { result.len == 32 }
@@ -263,7 +263,7 @@ circuit format_user_topic(
     suffix: bytes(128)
 ) -> bytes(384)
     lex polykit/identity
-    precision C
+    @precision C
 {
     concat(lex_namespace, ".", hex(user_id), ".", suffix)
 }
@@ -273,7 +273,7 @@ circuit format_global_topic(
     suffix: bytes(128)
 ) -> bytes(384)
     lex polykit/identity
-    precision C
+    @precision C
 {
     concat("lex://estream/apps/", lex_namespace, "/", suffix)
 }

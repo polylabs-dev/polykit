@@ -13,7 +13,7 @@ component polykit_metering version "0.2.0" {
 
 profile metering_defaults {
     lex polykit/metering
-    precision B
+    @precision B
 }
 
 // ── Data Types ──────────────────────────────────────────────────────────────
@@ -40,7 +40,7 @@ data DimensionValues : metering v1 {
     mpc_sessions: u64,
 }
     encode
-    observe metrics [executions, bandwidth, storage] level adaptive
+    @observe metrics [executions, bandwidth, storage] level adaptive
     store kv { key: user_id, partition_by: billing_period }
 
 data MeteringRecord : metering v1 {
@@ -50,7 +50,7 @@ data MeteringRecord : metering v1 {
     timestamp_ms: u64,
 }
     encode
-    observe metrics [operation] level adaptive
+    @observe metrics [operation] level adaptive
 
 data TierLimits : metering v1 {
     tier_name: bytes(32),
@@ -67,7 +67,7 @@ circuit record_usage(
     dims: DimensionValues
 ) -> MeteringRecord
     @metering_defaults
-    observe metrics: [usage_recorded, operation]
+    @observe metrics: [usage_recorded, operation]
     test golden {
         input { user_id: bytes(16), operation: "vcs.push", dims: DimensionValues { executions: 1, hashes: 50, bandwidth: 4096, storage: 4096, observables: 0, proofs: 0, circuits: 0, mpc_sessions: 0 } }
         assert { result.user_id == input.user_id }
@@ -89,8 +89,8 @@ circuit check_limits(
     tier_limits: TierLimits
 ) -> list<MeteringDimension>
     @metering_defaults
-    precision A
-    observe metrics: [limit_checks, violations_detected]
+    @precision A
+    @observe metrics: [limit_checks, violations_detected]
     invariant "non_negative" { current.executions >= 0 }
     test golden {
         input {
@@ -117,7 +117,7 @@ circuit get_usage_summary(
     user_id: bytes(16)
 ) -> DimensionValues
     @metering_defaults
-    observe metrics: [usage_lookups]
+    @observe metrics: [usage_lookups]
 {
     kv_get("metering", user_id)
 }
@@ -128,7 +128,7 @@ circuit accumulate(
     delta: DimensionValues
 ) -> DimensionValues
     @metering_defaults
-    precision A
+    @precision A
     test golden {
         input {
             current: DimensionValues { executions: 10, hashes: 0, bandwidth: 0, storage: 0, observables: 0, proofs: 0, circuits: 0, mpc_sessions: 0 },

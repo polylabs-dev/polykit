@@ -1,11 +1,11 @@
 [package]
 name = "polykit"
-version = "0.11.0"
+version = "0.12.0"
 description = "Shared SDK for all Poly Labs products — identity, metering, rate limiting, governance, zero-linkage privacy"
 lex = "esn/global/org/polylabs"
 
 [platform]
-estream = "0.11.0"
+estream = "0.12.0"
 target = ["wasm_client", "alpha_devnet"]
 
 [circuits]
