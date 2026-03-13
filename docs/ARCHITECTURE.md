@@ -41,12 +41,12 @@ PolyKit composes eStream platform graphs rather than duplicating them. The RBAC 
 │                                                                  │
 │  @polykit/react (thin TS)                                        │
 │  ├── PolyProvider          loads polykit.wasm, inits SPARK       │
-│  ├── useWasmSubscription   subscribes via WASM wire client       │
-│  ├── useWasmEmit           emits via WASM wire client            │
+│  ├── useStreamSubscribe    subscribes via Stream API             │
+│  ├── useStreamEmit         emits via Stream API                  │
 │  └── WidgetShell           layout + RBAC gate                    │
 │                                                                  │
 │  TS does: DOM mount, canvas render, browser events               │
-│  TS does NOT: crypto, state, data transforms, wire framing       │
+│  TS does NOT: crypto, state, data transforms, protocol framing   │
 ├──────────────────────────────────────────────────────────────────┤
 │  polykit.wasm (FastLang → ESCIR → Rust/WASM codegen)            │
 │                                                                  │
@@ -57,7 +57,8 @@ PolyKit composes eStream platform graphs rather than duplicating them. The RBAC 
 │  polykit-console       event bus, widget data, demo, RBAC        │
 │  polykit-graph         graph/DAG runtime helpers for WASM        │
 ├──────────────────────────────────────────────────────────────────┤
-│  eStream Wire Protocol (UDP :5000 / WebTransport :4433)          │
+│  eStream Stream API (UDP :5000 / WebTransport :4433)             │
+│  (binary wire protocol underneath — developers see streams)      │
 └──────────────────────────────────────────────────────────────────┘
 ```
 

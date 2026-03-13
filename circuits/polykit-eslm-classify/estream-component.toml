@@ -1,0 +1,40 @@
+[component]
+name = "polykit-eslm-classify"
+version = "0.2.0"
+category = "smart-circuit"
+implementation_type = "FastLang"
+status = "Published"
+description = "ESLM auto-classification with human-in-the-loop feedback, Cortex AI governance, confidence drift monitoring"
+license = "Apache-2.0"
+repository = "https://github.com/polylabs-dev/polykit"
+keywords = ["classification", "eslm", "machine-learning", "human-feedback", "cortex"]
+
+[component.author]
+name = "Poly Labs"
+email = "engineering@polylabs.dev"
+url = "https://polylabs.dev"
+
+[component.marketplace]
+pricing = "free"
+visibility = "open"
+
+[component.estream]
+min_version = "0.11.0"
+
+[component.dependencies]
+
+[component.schemas]
+provides = ["ClassificationSuggestion", "HumanFeedback", "ConfidenceThresholds"]
+requires = []
+
+[component.circuits]
+provides = ["classify_content", "submit_human_feedback", "get_confidence_thresholds"]
+target = ["cpu"]
+
+[component.lifecycle]
+status = "active"
+breaking_change_notice_days = 90
+changelog = "CHANGELOG.md"
+
+[component.include]
+circuits = ["eslm_classify.fl"]
