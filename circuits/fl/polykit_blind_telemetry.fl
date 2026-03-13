@@ -138,6 +138,7 @@ circuit blind_user_id(
 
 /// Verify that a cohort meets the minimum size for k-anonymity.
 /// Returns the cohort status and whether emission is permitted.
+@guard(block_on: cohort_too_small)
 circuit enforce_cohort(
     active_user_count: u32,
     min_cohort_size: u32,
@@ -218,6 +219,7 @@ circuit inject_noise(
 
 /// Enforce that metrics are only emitted at or above the minimum aggregate window.
 /// Rejects emission attempts that are too frequent.
+@guard(block_on: window_too_short)
 circuit enforce_aggregate_window(
     window_start_ms: u64,
     window_end_ms: u64,
@@ -286,6 +288,7 @@ circuit emit_blinded_telemetry(
     constant_time true
     streamsight true
     observe metrics: [batches_emitted, batches_rejected, metrics_per_batch]
+    cortex on_block: telemetry_blocked_alert
     monitor "emission_rate" { batches_emitted < 100/hr }
     monitor "rejection_rate" { batches_rejected < 50/hr }
     invariant "cohort_enforced" { active_user_count >= config.cohort_min_size }
@@ -296,7 +299,7 @@ circuit emit_blinded_telemetry(
     property safety "no_content_leak" { batch contains only numeric aggregates }
     property liveness "eventually_emits" { eventually(batches_emitted > 0) when cohort healthy }
     esz_emit "verify/polykit_blind_telemetry.esz"
-    li_feed full_escir true, optimized_ir true, optimization_metadata true
+    ai_feed full_escir true, optimized_ir true, optimization_metadata true
     meters [compute_cycles, memory_bytes, bandwidth_bytes]
     wasm_abi [eslite_insert, stream_emit, now]
     fuzz_target

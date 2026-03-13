@@ -17,6 +17,8 @@ export { PolyProvider, usePolyContext } from './PolyProvider';
 export {
   useWasmSubscription,
   useWasmEmit,
+  useRbac,
+  useLexStream,
   useWasmWidgetData,
   useEmitWidgetEvent,
   useSanitize,

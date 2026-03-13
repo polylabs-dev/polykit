@@ -11,30 +11,50 @@
 //         ├── sub_lex app fan_in                     <- Per-app sub-lex
 //         └── Only METRICS, COMPLIANCE_STATUS fan up
 
-type UsComplianceResult = struct {
+data UsComplianceResult : polykit v1 {
     compliant: bool,
     ccpa_status: bytes(32),
     soc2_status: bytes(32),
     audit_hash: bytes(32),
 }
+    store kv
+    govern lex esn/region/us/org/polylabs
+    cortex {
+        redact [ccpa_status, soc2_status],
+        infer on_write,
+        on_anomaly alert "us-compliance-team"
+    }
 
-type UsDataRequest = struct {
+data UsDataRequest : polykit v1 {
     subject_id: bytes(32),
     request_type: u8,
     data_category: bytes(16),
 }
+    store kv
+    govern lex esn/region/us/org/polylabs
+    cortex {
+        redact [subject_id],
+        infer on_write,
+        on_anomaly alert "us-compliance-team"
+    }
 
-type UsDataResponse = struct {
+data UsDataResponse : polykit v1 {
     request_hash: bytes(32),
     fulfilled: bool,
     records_affected: u64,
 }
+    store kv
+    govern lex esn/region/us/org/polylabs
+    cortex {
+        infer on_write
+    }
 
 stream us_compliance_events: event<UsComplianceResult>
     retention 7y
     consumers [audit, compliance_dashboard]
 
 // --- US regional compliance check ---
+@guard(block_on: ccpa_violation)
 circuit us_compliance_check(subject: bytes(32), data: bytes(4096)) -> UsComplianceResult
     lex esn/region/us/org/polylabs {
         governance hierarchical
@@ -52,8 +72,11 @@ circuit us_compliance_check(subject: bytes(32), data: bytes(4096)) -> UsComplian
     precision B
     constant_time true
     observe metrics: [compliance_checks, ccpa_requests, soc2_audits]
+    cortex policy: ccpa_compliance
+    cortex on_anomaly: ccpa_violation_alert
     monitor "compliance_rate" { compliant_checks / total_checks > 0.99 }
     invariant "pii_stays_in_us" { pii_exported == false }
+    property safety "data_residency_us" { storage_region == "us" }
     test golden "us_compliance_basic" {
         let result = us_compliance_check(bytes(32, 0xAA), bytes(4096, 0xBB))
         assert result.compliant == true

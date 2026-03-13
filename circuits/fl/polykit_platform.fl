@@ -21,23 +21,38 @@ platform polykit_framework v1 {
     import polykit_blind_relay from "./apps/polykit_blind_relay.fl"
     import polykit_classified_fusion from "./apps/polykit_classified_fusion.fl"
 
+    import polykit_zero_linkage from "./polykit_zero_linkage.fl"
+    import polykit_blinded_billing from "./polykit_blinded_billing.fl"
+    import polykit_bridge from "./polykit_bridge.fl"
+    import polykit_user_graph from "./polykit_user_graph.fl"
+    import polykit_metering_graph from "./polykit_metering_graph.fl"
+    import polykit_subscription_lifecycle from "./polykit_subscription_lifecycle.fl"
+
     group core [polykit_identity, polykit_metering, polykit_rate_limiter, polykit_blind_telemetry]
     group compliance [polykit_sanitize, polykit_governance]
     group intelligence [polykit_li_effects, polykit_delta_curate]
     group regional [polykit_regional_us, polykit_regional_eu]
     group apps [polykit_media_stream, polykit_crdt_sync, polykit_blind_relay, polykit_classified_fusion]
+    group zero_linkage [polykit_zero_linkage, polykit_blinded_billing, polykit_bridge]
+    group graphs [polykit_user_graph, polykit_metering_graph, polykit_subscription_lifecycle]
 
     connect polykit_identity -> polykit_metering
     connect polykit_metering -> polykit_rate_limiter
     connect polykit_sanitize -> polykit_governance
     connect polykit_governance -> polykit_regional_us
     connect polykit_governance -> polykit_regional_eu
+    connect polykit_zero_linkage -> polykit_identity
+    connect polykit_blinded_billing -> polykit_identity
+    connect polykit_bridge -> polykit_identity
+    connect polykit_user_graph -> polykit_metering
+    connect polykit_metering_graph -> polykit_metering
+    connect polykit_subscription_lifecycle -> polykit_metering
 
     bind polykit_li_effects -> li_engine
 
     streamsight true
     esz_emit "verify/polykit_platform.esz"
-    li_feed full_escir true, optimized_ir true
+    ai_feed full_escir true, optimized_ir true, optimization_metadata true
 
     target wasm_client
     target alpha_devnet

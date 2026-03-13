@@ -15,7 +15,9 @@ type MeteringDimension = enum {
     MpcSessions,
 }
 
-type DimensionValues = struct {
+// ── Data Declarations with Stratum + Cortex ─────────────────────────
+
+data DimensionValues : polykit v1 {
     executions: u64,
     hashes: u64,
     bandwidth: u64,
@@ -25,21 +27,44 @@ type DimensionValues = struct {
     circuits: u64,
     mpc_sessions: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs/metering
 
-type TierLimits = struct {
+data TierLimits : polykit v1 {
     tier_name: string,
     limits: DimensionValues,
 }
+    store kv
+    govern lex esn/global/org/polylabs/metering
 
-type MeteringRecord = struct {
+data MeteringRecord : polykit v1 {
     user_id: bytes(16),
     operation: string,
     dimensions: DimensionValues,
     timestamp_ms: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs/metering
+    cortex {
+        infer on_write
+        on_anomaly alert "metering-team"
+    }
+
+// ── Streams ─────────────────────────────────────────────────────────
 
 stream metering_events: event<MeteringRecord>
+    retention 90d
+    consumers [streamsight, billing]
     | throttle 1000/s burst 2000
+
+// ── Series ──────────────────────────────────────────────────────────
+
+series metering_series {
+    over MeteringRecord,
+    fields: [executions, hashes, bandwidth, storage]
+}
+
+// ── Core Circuits ───────────────────────────────────────────────────
 
 // --- Record a metering event for a single operation ---
 circuit record_usage(user_id: bytes(16), operation: string, dims: DimensionValues) -> MeteringRecord
@@ -47,6 +72,9 @@ circuit record_usage(user_id: bytes(16), operation: string, dims: DimensionValue
     meters [compute_cycles, memory_bytes]
     observe metrics: [metering_records, dimension_totals]
     monitor "metering_throughput" { metering_records > 0 }
+    property safety "metering_non_negative" { dims.executions >= 0 and dims.hashes >= 0 }
+    property liveness "records_processed" { eventually(metering_records > 0) }
+    cortex on_anomaly: metering_spike_alert
     wasm_abi [eslite_insert, stream_emit, now]
     test golden "record_basic_usage" {
         let dims = DimensionValues { executions: 1, hashes: 0, bandwidth: 1024, storage: 0, observables: 1, proofs: 0, circuits: 0, mpc_sessions: 0 }
@@ -67,10 +95,12 @@ circuit record_usage(user_id: bytes(16), operation: string, dims: DimensionValue
 }
 
 // --- Check if current usage exceeds tier limits ---
+@guard(block_on: tier_limit_exceeded)
 circuit check_limits(current: DimensionValues, tier: TierLimits) -> [MeteringDimension; 8]
     profile poly_framework_standard
     observe metrics: [limit_checks, limit_violations]
     invariant "no_false_positives" { violation implies current_dim > limit_dim }
+    property safety "metering_non_negative" { all dimensions >= 0 }
 {
     parallel for i in 0..8 {
         if current[i] > tier.limits[i] { MeteringDimension::from_index(i) } else { null }

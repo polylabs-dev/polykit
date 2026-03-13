@@ -3,35 +3,54 @@
 // Per-tier rate limiting based on metering dimensions.
 // Uses a state machine to model open/throttled/blocked transitions.
 
-type RateWindow = struct {
+// ── Data Declarations with Stratum + Cortex ─────────────────────────
+
+data RateWindow : polykit v1 {
     count: u64,
     window_start_ms: u64,
     window_size_ms: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs/rate_limiter
 
-type RateCheckResult = struct {
+data RateCheckResult : polykit v1 {
     allowed: bool,
     remaining: u64,
     reset_at_ms: u64,
     retry_after_ms: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs/rate_limiter
+
+// ── Streams ─────────────────────────────────────────────────────────
 
 stream rate_state: state<RateWindow>
 
+// ── State Machine ───────────────────────────────────────────────────
+
+state_machine rate_fsm {
+    initial open
+    persistence wal
+    terminal [blocked]
+    ai_anomaly_detection true
+    states [open, throttled, blocked]
+    transition open -> throttled when usage > soft_limit
+    transition throttled -> blocked when usage > hard_limit
+    transition blocked -> open when window_reset
+}
+
+// ── Core Circuits ───────────────────────────────────────────────────
+
 // --- Check if an operation is within rate limits ---
+@guard(block_on: rate_limit_exceeded)
 circuit check_rate(user_id: bytes(16), operation: string, tier: string) -> RateCheckResult
     profile poly_framework_standard
-    state_machine rate_fsm {
-        initial open
-        states [open, throttled, blocked]
-        transition open -> throttled when usage > soft_limit
-        transition throttled -> blocked when usage > hard_limit
-        transition blocked -> open when window_reset
-    }
     observe metrics: [rate_checks, throttle_events, blocked_events]
     monitor "throttle_rate" { throttle_events / rate_checks < 0.10 }
     wasm_abi [eslite_query, now]
     invariant "monotonic_consumption" { new_count >= old_count }
+    property safety "no_bypass" { rate_limit_enforced implies no_unauthorized_access }
+    cortex policy: rate_enforcement
     test golden "check_rate_limit_open" {
         let result = check_rate(bytes(16, 0x01), "test_op", "free")
         assert result.allowed == true or result.allowed == false

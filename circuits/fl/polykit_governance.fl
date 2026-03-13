@@ -11,7 +11,7 @@ audience public { fields [summary, status, timestamp] }
 audience internal inherits public { fields [details, assignee, priority] }
 audience privileged inherits internal { fields [pii_data, raw_content], hide [internal_notes] }
 
-type GovernedRecord = struct {
+data GovernedRecord : polykit v1 {
     summary: string,
     status: string,
     timestamp: u64,
@@ -22,14 +22,25 @@ type GovernedRecord = struct {
     raw_content: bytes(4096),
     internal_notes: bytes(1024),
 }
+    store kv
+    govern lex esn/global/org/polylabs
+    cortex {
+        redact [pii_data, raw_content, internal_notes],
+        obfuscate [assignee],
+        infer on_write,
+        on_anomaly alert "governance-team"
+    }
 
-type GovernedResult = struct {
+data GovernedResult : polykit v1 {
     record_hash: bytes(32),
     classification: bytes(32),
     fields_redacted: u32,
 }
+    store kv
+    govern lex esn/global/org/polylabs
 
 // --- Emit a record with field-level governance ---
+@guard(block_on: classification_violation)
 circuit governed_emit(record: GovernedRecord, classification: string) -> GovernedResult
     profile poly_framework_standard
     lex esn/global/org/polylabs {
@@ -54,8 +65,11 @@ circuit governed_emit(record: GovernedRecord, classification: string) -> Governe
     }
     observe metrics: [governed_emissions, field_redactions, audience_checks]
     monitor "redaction_coverage" { field_redactions > 0 }
+    cortex policy: field_visibility
+    cortex on_anomaly: classification_violation_alert
     invariant "no_pii_at_public" { pii_visible_to_public == false }
     property safety "classification_monotonic" { output_level >= input_level }
+    ai_feed full_escir true, optimized_ir true, optimization_metadata true
     test golden "governed_emit_basic" {
         let record = GovernedRecord { summary: "test", status: "active", timestamp: 1000, details: bytes(1024, 0x00), assignee: bytes(32, 0xAA), priority: 1, pii_data: bytes(512, 0x00), raw_content: bytes(4096, 0x00), internal_notes: bytes(1024, 0x00) }
         let result = governed_emit(record, "internal")

@@ -4,39 +4,41 @@ members = [
     "crates/polykit-core",
     "crates/polykit-eslite",
     "crates/polykit-console",
-    "crates/polykit-sanitize",
+    "crates/polykit-graph",
     "crates/polykit-wasm",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.11.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/polylabs-dev/polykit"
 
 [workspace.dependencies]
-# eStream platform (v0.8.1)
-estream-kernel = { git = "https://github.com/polyquantum/estream-io", branch = "main", features = ["ml-dsa-87", "ml-kem-1024", "vrf", "metering", "telemetry"] }
-estream-escir = { git = "https://github.com/polyquantum/estream-io", branch = "main", features = ["codegen", "circuits"] }
-estream-spark = { git = "https://github.com/polyquantum/estream-io", branch = "main" }
-eslite = { git = "https://github.com/polyquantum/estream-io", branch = "main" }
-streamsight = { git = "https://github.com/polyquantum/estream-io", branch = "main" }
+# eStream platform (v0.11.0)
+estream-kernel = { git = "https://github.com/polyquantum/estream", branch = "main", features = ["ml-dsa-87", "ml-kem-1024", "vrf", "metering", "telemetry", "stratum", "cortex", "wire-udp"] }
+estream-escir = { git = "https://github.com/polyquantum/estream", branch = "main", features = ["codegen", "circuits", "graph", "dag"] }
+estream-spark = { git = "https://github.com/polyquantum/estream", branch = "main" }
+estream-wire = { git = "https://github.com/polyquantum/estream", branch = "main", features = ["udp", "quic"] }
+eslite = { git = "https://github.com/polyquantum/estream", branch = "main" }
+streamsight = { git = "https://github.com/polyquantum/estream", branch = "main" }
 
 # Internal crates
 polykit-core = { path = "crates/polykit-core" }
 polykit-eslite = { path = "crates/polykit-eslite" }
 polykit-console = { path = "crates/polykit-console" }
-polykit-sanitize = { path = "crates/polykit-sanitize" }
+polykit-graph = { path = "crates/polykit-graph" }
 
 # Crypto
 sha3 = "0.10"
 hkdf = "0.12"
 aes-gcm = "0.10"
+blake3 = "1.5"
 
 # WASM
 wasm-bindgen = "0.2"
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["console"] }
+web-sys = { version = "0.3", features = ["console", "WebTransport", "WritableStream", "ReadableStream"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

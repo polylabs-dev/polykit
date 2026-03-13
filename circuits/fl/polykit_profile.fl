@@ -21,10 +21,15 @@ profile poly_framework_standard {
     rbac [user, operator, admin]
     offline mode queue, sync eventual, max_offline 24h
     wasm_abi [eslite_query, eslite_insert, stream_emit, stream_subscribe]
+    cortex {
+        policy: poly_framework
+        on_anomaly: alert "platform-team"
+    }
 }
 
 profile poly_framework_sensitive inherits poly_framework_standard {
     constant_time true
     sanitize pii_fields [], retention 7y
     witness threshold(3, 5)
+    fuzz_target true
 }

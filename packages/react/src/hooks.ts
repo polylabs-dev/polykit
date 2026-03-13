@@ -4,14 +4,17 @@
  * These hooks call into polykit.wasm for ALL data operations.
  * They ONLY handle React state management and DOM lifecycle.
  * Zero business logic, zero crypto, zero data transforms.
+ *
+ * v0.11.0: WebTransport (QUIC/HTTP3), RBAC, LexStream hooks
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { getWasm, parseWasmResponse } from './wasm-bridge';
 
 /**
- * Subscribe to a lex stream topic via WASM wire client.
- * WASM manages the subscription; this hook polls for new render payloads.
+ * Subscribe to a lex stream topic via WASM WebTransport (QUIC/HTTP3 datagrams).
+ * WASM manages the WebTransport session on port 4433; this hook
+ * receives typed payloads as they arrive via datagram.
  */
 export function useWasmSubscription<T = unknown>(topic: string): {
   data: T | null;
@@ -21,11 +24,14 @@ export function useWasmSubscription<T = unknown>(topic: string): {
   const [status, setStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
 
   useEffect(() => {
-    // WASM manages the wire protocol subscription internally
-    // This hook polls the WASM-side buffer for new data
-    setStatus('connected');
+    const wasm = getWasm();
+    const handle = wasm.subscribe_webtransport(topic, (payload: Uint8Array) => {
+      setData(parseWasmResponse<T>(payload));
+      setStatus('connected');
+    });
+    setStatus('connecting');
     return () => {
-      // Cleanup: WASM unsubscribes
+      wasm.unsubscribe_webtransport(handle);
     };
   }, [topic]);
 
@@ -33,20 +39,79 @@ export function useWasmSubscription<T = unknown>(topic: string): {
 }
 
 /**
- * Emit to a lex stream topic via WASM wire client.
+ * Emit to a lex stream topic via WASM WebTransport datagrams.
  */
 export function useWasmEmit() {
   return useCallback((topic: string, payload: unknown) => {
     const wasm = getWasm();
-    // WASM handles wire protocol framing, signing, and emission
-    // TS just passes the serialized payload
-    const _ = wasm; // Will call wasm.emit() when wire client is integrated
+    wasm.emit_webtransport(topic, JSON.stringify(payload));
   }, []);
 }
 
 /**
+ * RBAC-aware hook backed by WASM. Fail-closed: if WASM cannot verify
+ * the role, access is denied. Returns the resolved permission set.
+ */
+export function useRbac(requiredRole: string): {
+  allowed: boolean;
+  role: string | null;
+  loading: boolean;
+} {
+  const [state, setState] = useState<{
+    allowed: boolean;
+    role: string | null;
+    loading: boolean;
+  }>({ allowed: false, role: null, loading: true });
+
+  useEffect(() => {
+    const wasm = getWasm();
+    try {
+      const result = parseWasmResponse<{ allowed: boolean; role: string }>(
+        wasm.check_rbac(requiredRole)
+      );
+      setState({ allowed: result.allowed, role: result.role, loading: false });
+    } catch {
+      setState({ allowed: false, role: null, loading: false });
+    }
+  }, [requiredRole]);
+
+  return state;
+}
+
+/**
+ * Typed lex stream subscription. Receives structured events from a
+ * specific lex namespace path via the WASM wire client.
+ */
+export function useLexStream<T = unknown>(
+  lexPath: string,
+  eventType?: string
+): {
+  events: T[];
+  latest: T | null;
+  status: 'connecting' | 'streaming' | 'error';
+} {
+  const [events, setEvents] = useState<T[]>([]);
+  const [status, setStatus] = useState<'connecting' | 'streaming' | 'error'>('connecting');
+
+  useEffect(() => {
+    const wasm = getWasm();
+    const handle = wasm.subscribe_lex_stream(lexPath, eventType ?? '*', (payload: Uint8Array) => {
+      const event = parseWasmResponse<T>(payload);
+      setEvents((prev) => [...prev.slice(-99), event]);
+      setStatus('streaming');
+    });
+    setStatus('connecting');
+    return () => {
+      wasm.unsubscribe_lex_stream(handle);
+    };
+  }, [lexPath, eventType]);
+
+  return { events, latest: events[events.length - 1] ?? null, status };
+}
+
+/**
  * Get render-ready widget data from WASM.
- * WASM processes stream data + event bus events → returns JSON for rendering.
+ * WASM processes stream data + event bus events -> returns JSON for rendering.
  */
 export function useWasmWidgetData<T = unknown>(widgetId: string): T | null {
   const [data, setData] = useState<T | null>(null);

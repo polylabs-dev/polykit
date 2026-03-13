@@ -17,31 +17,51 @@
 //   PSEUDONYMIZED -> encrypted (processor only)
 //   ANONYMOUS -> public (stripped of all identifiers)
 
-type EuComplianceResult = struct {
+data EuComplianceResult : polykit v1 {
     compliant: bool,
     gdpr_status: bytes(32),
     data_category: bytes(16),
     audit_hash: bytes(32),
 }
+    store kv
+    govern lex esn/region/eu/org/polylabs
+    cortex {
+        redact [gdpr_status],
+        infer on_write,
+        on_anomaly alert "eu-compliance-team"
+    }
 
-type EuDataSubjectRequest = struct {
+data EuDataSubjectRequest : polykit v1 {
     subject_id: bytes(32),
     request_type: u8,
     lawful_basis: bytes(16),
 }
+    store kv
+    govern lex esn/region/eu/org/polylabs
+    cortex {
+        redact [subject_id],
+        infer on_write,
+        on_anomaly alert "eu-compliance-team"
+    }
 
-type EuDataSubjectResponse = struct {
+data EuDataSubjectResponse : polykit v1 {
     request_hash: bytes(32),
     fulfilled: bool,
     erasure_complete: bool,
     portability_hash: bytes(32),
 }
+    store kv
+    govern lex esn/region/eu/org/polylabs
+    cortex {
+        infer on_write
+    }
 
 stream eu_compliance_events: event<EuComplianceResult>
     retention 7y
     consumers [dpo, audit, supervisory_authority]
 
 // --- EU GDPR compliance processor ---
+@guard(block_on: gdpr_violation)
 circuit eu_gdpr_processor(subject: bytes(32), data: bytes(4096)) -> EuComplianceResult
     lex esn/region/eu/org/polylabs {
         governance hierarchical
@@ -78,9 +98,12 @@ circuit eu_gdpr_processor(subject: bytes(32), data: bytes(4096)) -> EuCompliance
     precision A
     constant_time true
     observe metrics: [data_subject_requests, erasure_ops, consent_records, lawful_basis_checks]
+    cortex policy: gdpr_compliance
+    cortex on_anomaly: gdpr_violation_alert
     invariant "data_minimisation" { fields_exposed <= purpose_required }
     invariant "right_to_erasure" { erasure_complete == true }
     invariant "no_data_leaves_eu" { eu_data_exported == false }
+    property safety "data_residency_eu" { storage_region == "eu" }
     monitor "gdpr_compliance_rate" { compliant_ops / total_ops > 0.999 }
     test golden "eu_gdpr_basic" {
         let result = eu_gdpr_processor(bytes(32, 0xAA), bytes(4096, 0xBB))
@@ -113,6 +136,7 @@ circuit gdpr_subject_request(req: EuDataSubjectRequest) -> EuDataSubjectResponse
     constant_time true
     sanitize pii_fields [subject_id], retention 7y
     observe metrics: [gdpr_requests_by_type, fulfillment_time_ms, erasure_completions]
+    fuzz_target
     invariant "response_within_30_days" { fulfillment_time_days <= 30 }
     invariant "lawful_basis_valid" { lawful_basis != null }
     monitor "erasure_sla" { fulfillment_time_ms < 86400000 }

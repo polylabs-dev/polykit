@@ -13,10 +13,24 @@ import polykit_metering from "../polykit_metering.fl"
 type DeviceId = bytes(32)
 type CrdtState = bytes(4096)
 
-type MergeResult = struct {
+data MergeResult : polykit v1 {
     merged: bytes(4096),
     conflicts: u32,
     version: u64,
+}
+    store kv
+    govern lex esn/global/org/polylabs/session
+
+// ── Streams ─────────────────────────────────────────────────────────
+
+stream sync_events {
+    event state_merged {
+        device_id: bytes(32),
+        conflicts: u32,
+    }
+    event offline_queued {
+        queue_depth: u32,
+    }
 }
 
 // --- Merge CRDT states from two replicas ---
@@ -31,6 +45,8 @@ circuit merge_state(local: CrdtState, remote: CrdtState, device: DeviceId) -> Me
     invariant "merge_idempotent" { merge(a, a) == a }
     property liveness "eventual_convergence" { eventually(synced) }
     monitor "sync_lag" { sync_lag_ms < 30000 }
+    fuzz_target
+    ai_feed full_escir true, optimized_ir true, optimization_metadata true
     kat_vector
     test golden "merge_crdt_states" {
         let local = bytes(4096, 0xAA)
@@ -58,10 +74,11 @@ circuit offline_queue(operation: bytes(1024), device: DeviceId) -> bytes(32)
     precision C
     offline mode crdt, sync eventual, max_offline 30d
     meters [compute_cycles, storage]
+    observe metrics: [queue_operations, queue_depth]
     wasm_abi [eslite_query, eslite_insert, stream_emit]
     invariant "queue_ordered" { incremented > 0 }
     esz_emit "verify/polylabs_crdt.esz"
-    li_feed full_escir true, optimized_ir true
+    ai_feed full_escir true, optimized_ir true
 {
     let op_hash = sha3_256(operation)
     let stored = store(op_hash, operation)

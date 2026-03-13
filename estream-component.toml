@@ -1,0 +1,22 @@
+[component]
+name = "polykit"
+version = "0.11.0"
+type = "sdk"
+description = "Shared SDK for all Poly Labs products"
+
+[component.circuits]
+total = 22
+path = "circuits/fl"
+
+[component.dependencies]
+estream = "0.11.0"
+
+[component.telemetry]
+schema_hash_circuit = "compute_schema_hash"
+blind = true
+context = "poly-polykit-telemetry-v1"
+
+[component.graphs]
+user_identity = "circuits/fl/graphs/polykit_user_graph.fl"
+metering_aggregation = "circuits/fl/graphs/polykit_metering_graph.fl"
+subscription_history = "circuits/fl/graphs/polykit_subscription_lifecycle.fl"

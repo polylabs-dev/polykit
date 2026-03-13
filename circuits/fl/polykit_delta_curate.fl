@@ -13,18 +13,29 @@
 // ("field X did NOT change between T1-T2"), frequency proofs,
 // and statistical authenticity fingerprints committed at epoch boundaries.
 
-type DeltaRecord = struct {
+data DeltaRecord : polykit v1 {
     bitmask: u64,
     deltas: bytes(512),
     epoch: u64,
     is_snapshot: bool,
 }
+    store kv
+    govern lex esn/global/org/polylabs
+    cortex {
+        infer on_write,
+        on_anomaly alert "delta-integrity-team"
+    }
 
-type ReconstructedRecord = struct {
+data ReconstructedRecord : polykit v1 {
     data: bytes(4096),
     epoch: u64,
     delta_count: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs
+    cortex {
+        infer on_write
+    }
 
 // --- Encode a delta between current and previous record ---
 circuit delta_encode(current: bytes(4096), previous: bytes(4096), epoch: u64) -> DeltaRecord
@@ -36,7 +47,9 @@ circuit delta_encode(current: bytes(4096), previous: bytes(4096), epoch: u64) ->
     }
     observe metrics: [delta_ratio, epoch_snapshots, bitmask_density]
     monitor "compression_ratio" { delta_ratio > 5 }
+    fuzz_target
     invariant "lossless" { decode(encode(record)) == record }
+    property safety "lossless_roundtrip" { decode(encode(x)) == x }
     esz_emit "verify/polykit_delta_curate.esz"
     test golden "delta_encode_basic" {
         let current = bytes(4096, 0xAA)
@@ -74,6 +87,7 @@ circuit verify_exclusion(bitmasks: [u64; 100], field_index: u64, start_epoch: u6
     profile poly_framework_standard
     observe metrics: [exclusion_proofs_verified]
     invariant "field_index_valid" { field_index < 64 }
+    property liveness "curation_progress" { end_epoch > start_epoch }
 {
     let mask = 1 << field_index
     parallel for i in 0..100 {

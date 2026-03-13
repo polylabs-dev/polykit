@@ -1,0 +1,373 @@
+/// PolyKit User Identity Graph — User, device, session, and product binding topology
+///
+/// Models the per-user identity topology: a User owns Devices, Devices have Sessions,
+/// and Users are bound to Products (each binding using an isolated HKDF context per
+/// the zero-linkage architecture). Auth overlays track risk scoring and session activity.
+///
+/// Stratum graph storage + Cortex AI governance
+/// govern lex esn/global/org/polylabs/identity
+
+import polykit_identity from "../polykit_identity.fl"
+
+// ── Data: Node types (data + store + cortex) ────────────────────────
+
+data UserInfo : polykit v1 {
+    user_id: bytes(16),
+    created_at_ms: u64,
+    spark_level: u8,
+}
+    store graph
+    govern lex esn/global/org/polylabs/identity
+    cortex {
+        obfuscate [user_id]
+        infer on_write
+    }
+
+data DeviceInfo : polykit v1 {
+    device_id: bytes(32),
+    device_type: u8,
+    registered_at_ms: u64,
+    last_seen_ms: u64,
+}
+    store graph
+    govern lex esn/global/org/polylabs/identity
+    cortex {
+        obfuscate [device_id]
+        infer on_write
+    }
+
+data SessionInfo : polykit v1 {
+    session_id: bytes(32),
+    device_id: bytes(32),
+    created_at_ms: u64,
+    expires_at_ms: u64,
+    risk_score: u64,
+}
+    store graph
+    govern lex esn/global/org/polylabs/identity
+    cortex {
+        obfuscate [session_id]
+        infer on_write
+        on_anomaly alert "identity-team"
+    }
+
+data ProductBindingInfo : polykit v1 {
+    product_name: string,
+    bound_user_id: bytes(16),
+    hkdf_context: string,
+}
+    store graph
+    govern lex esn/global/org/polylabs/identity
+    cortex {
+        redact [hkdf_context]
+        infer on_write
+    }
+
+// ── Edge types ──────────────────────────────────────────────────────
+
+type OwnsDeviceEdge = struct {
+    edge_id: bytes(16),
+    registered_at: u64,
+}
+
+type HasSessionEdge = struct {
+    edge_id: bytes(16),
+    created_at: u64,
+}
+
+type BoundToEdge = struct {
+    edge_id: bytes(16),
+    bound_at: u64,
+    product_name: string,
+}
+
+// ── State Machine ───────────────────────────────────────────────────
+
+state_machine session_lifecycle {
+    initial CREATED
+    persistence wal
+    terminal [EXPIRED, REVOKED]
+    ai_anomaly_detection true
+
+    CREATED -> ACTIVE when first_request
+    ACTIVE -> EXPIRED when ttl_exceeded
+    ACTIVE -> REVOKED when user_logout
+    ACTIVE -> REVOKED when admin_revoke
+    ACTIVE -> SUSPENDED when risk_threshold_exceeded
+    SUSPENDED -> ACTIVE when risk_cleared
+    SUSPENDED -> REVOKED when admin_revoke
+}
+
+// ── Graph definition ────────────────────────────────────────────────
+
+graph user_identity {
+    node User : UserInfo
+    node Device : DeviceInfo
+    node Session : SessionInfo
+    node ProductBinding : ProductBindingInfo
+
+    edge owns_device : User -> Device
+    edge has_session : Device -> Session
+    edge bound_to : User -> ProductBinding
+
+    overlay auth on User { last_auth_ms, auth_count, risk_score }
+    overlay activity on Session { created_at, last_active, operations }
+
+    storage csr {
+        tier bram { capacity: 10_000 },
+        tier ddr { capacity: 1_000_000 },
+    }
+
+    series auth_history {
+        over nodes(User),
+        fields: [auth_count, risk_score, last_auth_ms]
+    }
+
+    sign ml_dsa_87
+    ai_feed user_behavior
+}
+
+// ── Series ──────────────────────────────────────────────────────────
+
+series user_identity_series: user_identity
+    merkle_chain true
+    lattice_imprint true
+    witness_attest true
+
+// ── Streams ─────────────────────────────────────────────────────────
+
+stream user_graph_events: event<UserInfo>
+    retention 7y
+    consumers [governance, audit, streamsight]
+
+stream session_events: event<SessionInfo>
+    retention 365d
+    consumers [governance, streamsight, alerting]
+
+// ── Circuits: Node registration ─────────────────────────────────────
+
+/// Register a new user in the identity graph.
+circuit add_user(graph_id: bytes(32), user: UserInfo) -> bytes(16)
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/identity
+    precision C
+    povc true
+    observe metrics: [users_registered, spark_level_distribution]
+    monitor "user_registration_rate" { users_registered < 1000 per 3600s }
+    invariant "user_id_nonempty" { user.user_id != zero_bytes(16) }
+    invariant "spark_level_valid" { user.spark_level <= 5 }
+    property safety "unique_user_id" { no duplicate user_id in graph }
+    property liveness "users_eventually_registered" { eventually(users_registered > 0) }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    eslite_insert("user_nodes", user.user_id, user)
+    overlay_set(user_identity, user.user_id, "auth_count", 0)
+    overlay_set(user_identity, user.user_id, "risk_score", 0)
+    overlay_set(user_identity, user.user_id, "last_auth_ms", user.created_at_ms)
+    emit(user_graph_events, user)
+    user.user_id
+}
+
+/// Register a device and link it to a user.
+circuit add_device(graph_id: bytes(32), user_id: bytes(16), device: DeviceInfo) -> bytes(32)
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/identity
+    precision C
+    povc true
+    observe metrics: [devices_registered, device_type_distribution]
+    monitor "device_registration_rate" { devices_registered < 500 per 3600s }
+    invariant "user_exists" { eslite_exists("user_nodes", user_id) }
+    invariant "device_id_nonempty" { device.device_id != zero_bytes(32) }
+    property safety "device_bound_to_user" { device always linked to exactly one user }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, now]
+{
+    eslite_insert("device_nodes", device.device_id, device)
+    let edge_id = bit_slice(sha3_256(concat(user_id, device.device_id)), 0, 128)
+    let edge = OwnsDeviceEdge { edge_id: edge_id, registered_at: now() }
+    eslite_insert("owns_device_edges", edge_id, { from: user_id, to: device.device_id, edge: edge })
+    device.device_id
+}
+
+/// Create a session for a device and return the session ID.
+circuit create_session(graph_id: bytes(32), device_id: bytes(32), ttl_ms: u64) -> SessionInfo
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/identity
+    precision C
+    povc true
+    observe metrics: [sessions_created, session_ttl_distribution]
+    monitor "session_creation_rate" { sessions_created < 2000 per 3600s }
+    invariant "device_exists" { eslite_exists("device_nodes", device_id) }
+    invariant "ttl_reasonable" { ttl_ms >= 60000 and ttl_ms <= 86400000 * 30 }
+    property safety "session_expires" { expires_at_ms > created_at_ms }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let ts = now()
+    let session_seed = csprng(32)
+    let session_id = sha3_256(concat(session_seed, device_id, encode(ts)))
+
+    let session = SessionInfo {
+        session_id: session_id,
+        device_id: device_id,
+        created_at_ms: ts,
+        expires_at_ms: ts + ttl_ms,
+        risk_score: 0,
+    }
+
+    eslite_insert("session_nodes", session_id, session)
+    let edge_id = bit_slice(sha3_256(concat(device_id, session_id)), 0, 128)
+    let edge = HasSessionEdge { edge_id: edge_id, created_at: ts }
+    eslite_insert("has_session_edges", edge_id, { from: device_id, to: session_id, edge: edge })
+    overlay_set(user_identity, session_id, "created_at", ts)
+    overlay_set(user_identity, session_id, "last_active", ts)
+    overlay_set(user_identity, session_id, "operations", 0)
+    emit(session_events, session)
+
+    zeroize(session_seed)
+    session
+}
+
+/// Get all active sessions for a user across all devices.
+circuit get_user_sessions(graph_id: bytes(32), user_id: bytes(16)) -> list<SessionInfo>
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/identity
+    precision B
+    observe metrics: [session_queries, sessions_returned]
+    monitor "session_query_volume" { session_queries < 500 per 60s }
+    invariant "user_exists" { eslite_exists("user_nodes", user_id) }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_scan, eslite_query, now]
+{
+    let ts = now()
+    let device_edges = eslite_scan("owns_device_edges", user_id)
+    let sessions = []
+    for de in device_edges {
+        let session_edges = eslite_scan("has_session_edges", de.to)
+        for se in session_edges {
+            let session = eslite_query("session_nodes", se.to)
+            if session != null and session.expires_at_ms > ts {
+                sessions.push(session)
+            }
+        }
+    }
+    sessions
+}
+
+/// Bind a user to a product with an isolated HKDF context.
+circuit bind_product(graph_id: bytes(32), user_id: bytes(16), product_name: string) -> ProductBindingInfo
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/identity
+    precision C
+    povc true
+    observe metrics: [product_bindings, products_per_user]
+    monitor "binding_rate" { product_bindings < 100 per 3600s }
+    invariant "user_exists" { eslite_exists("user_nodes", user_id) }
+    invariant "product_name_valid" { len(product_name) > 0 }
+    property safety "binding_uses_isolated_context" { hkdf_context unique per product }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, now]
+{
+    let hkdf_context = concat("poly-", product_name, "-v1")
+    let binding = ProductBindingInfo {
+        product_name: product_name,
+        bound_user_id: user_id,
+        hkdf_context: hkdf_context,
+    }
+    let binding_key = concat(user_id, encode(product_name))
+    eslite_insert("product_binding_nodes", binding_key, binding)
+    let edge_id = bit_slice(sha3_256(binding_key), 0, 128)
+    let edge = BoundToEdge { edge_id: edge_id, bound_at: now(), product_name: product_name }
+    eslite_insert("bound_to_edges", edge_id, { from: user_id, to: binding_key, edge: edge })
+    binding
+}
+
+// ── Test / KAT / Fuzz annotations ──────────────────────────────────
+
+test golden "add_user_basic" {
+    input {
+        graph_id: hex("00" * 32)
+        user: UserInfo {
+            user_id: hex("aa" * 16),
+            created_at_ms: 1000,
+            spark_level: 3,
+        }
+    }
+    assert {
+        result == hex("aa" * 16)
+    }
+}
+
+test golden "add_device_linked" {
+    setup {
+        eslite_insert("user_nodes", hex("aa" * 16), UserInfo {
+            user_id: hex("aa" * 16),
+            created_at_ms: 1000,
+            spark_level: 3,
+        })
+    }
+    input {
+        graph_id: hex("00" * 32)
+        user_id: hex("aa" * 16)
+        device: DeviceInfo {
+            device_id: hex("bb" * 32),
+            device_type: 1,
+            registered_at_ms: 2000,
+            last_seen_ms: 2000,
+        }
+    }
+    assert {
+        result == hex("bb" * 32)
+    }
+}
+
+test golden "create_session_valid" {
+    setup {
+        eslite_insert("device_nodes", hex("bb" * 32), DeviceInfo {
+            device_id: hex("bb" * 32),
+            device_type: 1,
+            registered_at_ms: 2000,
+            last_seen_ms: 2000,
+        })
+    }
+    input {
+        graph_id: hex("00" * 32)
+        device_id: hex("bb" * 32)
+        ttl_ms: 3600000
+    }
+    assert {
+        len(result.session_id) == 32
+        result.device_id == hex("bb" * 32)
+        result.expires_at_ms > result.created_at_ms
+        result.risk_score == 0
+    }
+}
+
+test golden "bind_product_context_isolation" {
+    setup {
+        eslite_insert("user_nodes", hex("aa" * 16), UserInfo {
+            user_id: hex("aa" * 16),
+            created_at_ms: 1000,
+            spark_level: 3,
+        })
+    }
+    input {
+        graph_id: hex("00" * 32)
+        user_id: hex("aa" * 16)
+        product_name: "files"
+    }
+    assert {
+        result.product_name == "files"
+        result.hkdf_context == "poly-files-v1"
+        result.bound_user_id == hex("aa" * 16)
+    }
+}
+
+kat_vector "sha3_256_user_device_edge" {
+    function: "sha3_256"
+    input: concat(hex("aa" * 16), hex("bb" * 32))
+    expected_property: {
+        len(bit_slice(result, 0, 128)) == 16
+    }
+}

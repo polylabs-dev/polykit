@@ -16,17 +16,24 @@ type SessionId = bytes(32)
 type MediaFrame = bytes(8192)
 type ParticipantId = bytes(32)
 
-type VoiceSetupResult = struct {
+data VoiceSetupResult : polykit v1 {
     session_id: SessionId,
     key_hash: bytes(32),
     codec: string,
 }
+    store kv
+    govern lex esn/global/org/polylabs/session
+    cortex {
+        redact [session_key]
+    }
 
-type VideoFrame = struct {
+data VideoFrame : polykit v1 {
     frame_data: bytes(8192),
     sequence: u64,
     encrypted: bool,
 }
+    store kv
+    govern lex esn/global/org/polylabs/session
 
 stream voice_channel: event<MediaFrame>
     | throttle 50/s burst 100
@@ -35,6 +42,7 @@ stream video_channel: event<MediaFrame>
     | throttle 30/s burst 60
 
 // --- Set up encrypted voice session ---
+@guard(block_on: session_key_expired)
 circuit voice_setup(caller: ParticipantId, callee: ParticipantId, pk: bytes(1568)) -> VoiceSetupResult
     profile poly_framework_standard
     lex esn/global/org/polylabs/session
@@ -43,8 +51,10 @@ circuit voice_setup(caller: ParticipantId, callee: ParticipantId, pk: bytes(1568
     blind relay
     meters [compute_cycles, memory_bytes]
     observe metrics: [voice_sessions, setup_latency_ms]
+    cortex policy: media_relay
     invariant "key_exchange_complete" { kem != null }
     invariant "session_id_unique" { session_id != null }
+    property safety "no_plaintext_media" { frames always encrypted }
     monitor "setup_latency" { setup_latency_ms < 2000 }
     test golden "voice_setup_basic" {
         let caller = bytes(32, 0xAA)
@@ -80,12 +90,13 @@ circuit video_sfu(frame: MediaFrame, session: SessionId, recipients: bytes(256),
     blind relay
     meters [compute_cycles, bandwidth]
     observe metrics: [video_frames, sfu_fanout, frame_latency_us]
+    cortex policy: media_relay
     invariant "frame_encrypted" { encrypted == true }
     invariant "frame_padded" { padded_size == 8192 }
     monitor "frame_latency" { frame_latency_us < 50000 }
     fuzz_target
     esz_emit "verify/polylabs_media.esz"
-    li_feed full_escir true, optimized_ir true
+    ai_feed full_escir true, optimized_ir true
 {
     let kem = mlkem_encaps(pk)
     let nonce = blake3(session)

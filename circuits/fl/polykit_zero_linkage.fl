@@ -1,0 +1,393 @@
+/// PolyKit Zero-Linkage Privacy Architecture
+///
+/// The foundational constraint of Poly Labs: every product is cryptographically
+/// and observationally isolated from every other product. A subpoena for one
+/// product cannot reveal anything about another — not even that the user has
+/// other products.
+///
+/// Four dimensions of isolation:
+///   1. Key isolation:        Per-product HKDF("poly-{name}-v1") → independent SPARK key pairs
+///   2. Lex isolation:        Per-product lex namespaces ("lex://poly/{name}/")
+///   3. Metering isolation:   Per-product independent metering under own user_id
+///   4. Telemetry isolation:  Per-product StreamSight lex namespaces
+///
+/// govern lex esn/global/org/polylabs/zero_linkage
+
+import polykit_identity from "./polykit_identity.fl"
+
+// ── Data Declarations with Stratum + Cortex ─────────────────────────
+
+data ProductContext : polykit v1 {
+    product_name: string,
+    hkdf_context: string,
+    lex_namespace: string,
+    metering_namespace: string,
+    telemetry_context: string,
+}
+    store kv
+    govern lex esn/global/org/polylabs/zero_linkage
+    cortex {
+        infer on_write
+    }
+
+data IsolationProof : polykit v1 {
+    product_a_context: string,
+    product_b_context: string,
+    keys_independent: bool,
+    lex_isolated: bool,
+    metering_isolated: bool,
+    telemetry_isolated: bool,
+    proof_hash: bytes(32),
+}
+    store kv
+    govern lex esn/global/org/polylabs/zero_linkage
+    cortex {
+        infer on_read
+        on_anomaly alert "privacy-team"
+    }
+
+data ProductKeys : polykit v1 {
+    product_context: string,
+    user_id: bytes(16),
+    signing_pk: bytes(2592),
+    encryption_pk: bytes(1568),
+}
+    store kv
+    govern lex esn/global/org/polylabs/zero_linkage
+    cortex {
+        redact [signing_sk, encryption_sk]
+        infer on_write
+    }
+
+// ── Streams ─────────────────────────────────────────────────────────
+
+stream zero_linkage_events {
+    event product_registered { product_name: string }
+    event isolation_verified { product_a: string, product_b: string, passed: bool }
+    event isolation_violation { product_a: string, product_b: string, dimension: string }
+}
+    retention forever
+    consumers [governance, alerting]
+
+// ── Series ──────────────────────────────────────────────────────────
+
+series zero_linkage_series {
+    over ProductContext,
+    fields: [registration_count, verification_count, violation_count]
+}
+
+// ── Core Circuits ───────────────────────────────────────────────────
+
+/// Derive per-product SPARK key pairs using HKDF with product-specific context.
+/// The master seed is the same but the HKDF info parameter differs per product,
+/// producing cryptographically independent key material.
+@guard(block_on: key_derivation_failed)
+circuit derive_product_keys(
+    master_seed: bytes(32),
+    product_context: ProductContext,
+) -> ProductKeys
+    profile poly_framework_sensitive
+    lex esn/global/org/polylabs/zero_linkage
+    precision C
+    constant_time true
+    observe metrics: [product_key_derivations, hkdf_ops]
+    monitor "derivation_latency" { derivation_time_ms < 50 }
+    invariant "seed_minimum_entropy" { len(master_seed) >= 32 }
+    invariant "context_nonempty" { len(product_context.hkdf_context) > 0 }
+    property safety "context_isolation" { derive(seed, ctx_a) != derive(seed, ctx_b) when ctx_a != ctx_b }
+    property safety "no_seed_in_output" { output contains no bits of master_seed }
+    fuzz_target
+    kat_vector "hkdf_product_derivation" {
+        input: { master_seed: 0xAA * 32, hkdf_context: "poly-files-v1" }
+        expected: { user_id_len: 16, signing_pk_len: 2592, encryption_pk_len: 1568, deterministic: true }
+    }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, now]
+{
+    let ctx_bytes = encode(product_context.hkdf_context)
+    let salt = sha3_256(ctx_bytes)
+    let prk = hkdf_extract(salt, master_seed)
+    let derived = hkdf_expand(prk, ctx_bytes, 64)
+
+    let signing_seed = bit_slice(derived, 0, 256)
+    let encryption_seed = bit_slice(derived, 256, 512)
+    let (signing_pk, _signing_sk) = mldsa_keygen(signing_seed)
+    let (encryption_pk, _encryption_sk) = mlkem_keygen(encryption_seed)
+    let pk_hash = sha3_256(signing_pk)
+    let user_id = bit_slice(pk_hash, 0, 128)
+
+    let keys = ProductKeys {
+        product_context: product_context.hkdf_context,
+        user_id: user_id,
+        signing_pk: signing_pk,
+        encryption_pk: encryption_pk,
+    }
+
+    eslite_insert("product_keys", concat(user_id, encode(product_context.product_name)), keys)
+
+    zeroize(prk)
+    zeroize(derived)
+    zeroize(signing_seed)
+    zeroize(encryption_seed)
+    zeroize(master_seed)
+
+    keys
+}
+
+/// Verify that two products have complete isolation across all four dimensions.
+/// All four dimensions must be true for isolation to hold.
+circuit verify_isolation(proof: IsolationProof) -> bool
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/zero_linkage
+    precision B
+    observe metrics: [isolation_verifications, isolation_failures]
+    monitor "isolation_failure_rate" { isolation_failures < 1 per 3600s }
+    invariant "distinct_products" { proof.product_a_context != proof.product_b_context }
+    invariant "proof_hash_valid" { len(proof.proof_hash) == 32 }
+    property safety "complete_isolation" { result == true implies all_four_dimensions_isolated }
+    cortex policy: zero_linkage_enforcement
+    cortex on_anomaly: isolation_breach_alert
+    meters [compute_cycles]
+    wasm_abi [stream_emit]
+{
+    let all_isolated = proof.keys_independent
+        and proof.lex_isolated
+        and proof.metering_isolated
+        and proof.telemetry_isolated
+
+    if all_isolated {
+        emit(zero_linkage_events, { isolation_verified: { product_a: proof.product_a_context, product_b: proof.product_b_context, passed: true } })
+    } else {
+        if !proof.keys_independent {
+            emit(zero_linkage_events, { isolation_violation: { product_a: proof.product_a_context, product_b: proof.product_b_context, dimension: "keys" } })
+        }
+        if !proof.lex_isolated {
+            emit(zero_linkage_events, { isolation_violation: { product_a: proof.product_a_context, product_b: proof.product_b_context, dimension: "lex" } })
+        }
+        if !proof.metering_isolated {
+            emit(zero_linkage_events, { isolation_violation: { product_a: proof.product_a_context, product_b: proof.product_b_context, dimension: "metering" } })
+        }
+        if !proof.telemetry_isolated {
+            emit(zero_linkage_events, { isolation_violation: { product_a: proof.product_a_context, product_b: proof.product_b_context, dimension: "telemetry" } })
+        }
+    }
+
+    all_isolated
+}
+
+/// Register a new product in the zero-linkage system.
+/// Deterministically derives all namespace strings from the product name.
+circuit register_product(name: string) -> ProductContext
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/zero_linkage
+    precision B
+    observe metrics: [products_registered]
+    monitor "product_registration_rate" { products_registered < 50 per 3600s }
+    invariant "name_nonempty" { len(name) > 0 }
+    invariant "name_lowercase" { name == lowercase(name) }
+    property safety "deterministic_context" { register(name) == register(name) }
+    property liveness "registration_completes" { eventually(products_registered > 0) }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let ctx = ProductContext {
+        product_name: name,
+        hkdf_context: concat("poly-", name, "-v1"),
+        lex_namespace: concat("lex://poly/", name, "/"),
+        metering_namespace: concat("meter://poly/", name, "/"),
+        telemetry_context: concat("poly-", name, "-telemetry-v1"),
+    }
+
+    eslite_insert("product_contexts", name, ctx)
+    emit(zero_linkage_events, { product_registered: { product_name: name } })
+
+    ctx
+}
+
+/// Build an isolation proof between two product contexts.
+/// Checks all four dimensions independently and computes a binding proof hash.
+circuit build_isolation_proof(
+    master_seed: bytes(32),
+    ctx_a: ProductContext,
+    ctx_b: ProductContext,
+) -> IsolationProof
+    profile poly_framework_sensitive
+    lex esn/global/org/polylabs/zero_linkage
+    precision C
+    constant_time true
+    observe metrics: [proofs_built]
+    invariant "distinct_contexts" { ctx_a.product_name != ctx_b.product_name }
+    property safety "proof_binding" { proof_hash binds all four dimensions }
+    fuzz_target
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [now]
+{
+    let keys_a = derive_product_keys(master_seed, ctx_a)
+    let keys_b = derive_product_keys(master_seed, ctx_b)
+
+    let keys_independent = keys_a.user_id != keys_b.user_id
+        and keys_a.signing_pk != keys_b.signing_pk
+        and keys_a.encryption_pk != keys_b.encryption_pk
+
+    let lex_isolated = ctx_a.lex_namespace != ctx_b.lex_namespace
+    let metering_isolated = ctx_a.metering_namespace != ctx_b.metering_namespace
+    let telemetry_isolated = ctx_a.telemetry_context != ctx_b.telemetry_context
+
+    let proof_payload = serialize(
+        keys_independent,
+        lex_isolated,
+        metering_isolated,
+        telemetry_isolated,
+        ctx_a.product_name,
+        ctx_b.product_name,
+    )
+    let proof_hash = sha3_256(proof_payload)
+
+    IsolationProof {
+        product_a_context: ctx_a.product_name,
+        product_b_context: ctx_b.product_name,
+        keys_independent: keys_independent,
+        lex_isolated: lex_isolated,
+        metering_isolated: metering_isolated,
+        telemetry_isolated: telemetry_isolated,
+        proof_hash: proof_hash,
+    }
+}
+
+// ── Test / KAT / Fuzz annotations ──────────────────────────────────
+
+test golden "register_product_files" {
+    input {
+        name: "files"
+    }
+    assert {
+        result.product_name == "files"
+        result.hkdf_context == "poly-files-v1"
+        result.lex_namespace == "lex://poly/files/"
+        result.metering_namespace == "meter://poly/files/"
+        result.telemetry_context == "poly-files-telemetry-v1"
+    }
+}
+
+test golden "derive_product_keys_isolation" {
+    setup {
+        let seed = bytes(32, 0xAA)
+        let ctx_files = ProductContext {
+            product_name: "files",
+            hkdf_context: "poly-files-v1",
+            lex_namespace: "lex://poly/files/",
+            metering_namespace: "meter://poly/files/",
+            telemetry_context: "poly-files-telemetry-v1",
+        }
+        let ctx_git = ProductContext {
+            product_name: "git",
+            hkdf_context: "poly-git-v1",
+            lex_namespace: "lex://poly/git/",
+            metering_namespace: "meter://poly/git/",
+            telemetry_context: "poly-git-telemetry-v1",
+        }
+    }
+    input {
+        master_seed: seed
+        product_context: ctx_files
+    }
+    assert {
+        let keys_files = result
+        let keys_git = derive_product_keys(seed, ctx_git)
+        keys_files.user_id != keys_git.user_id
+        keys_files.signing_pk != keys_git.signing_pk
+        keys_files.encryption_pk != keys_git.encryption_pk
+        len(keys_files.user_id) == 16
+        len(keys_files.signing_pk) == 2592
+        len(keys_files.encryption_pk) == 1568
+    }
+}
+
+test golden "verify_isolation_all_pass" {
+    input {
+        proof: IsolationProof {
+            product_a_context: "files",
+            product_b_context: "git",
+            keys_independent: true,
+            lex_isolated: true,
+            metering_isolated: true,
+            telemetry_isolated: true,
+            proof_hash: sha3_256("files:git:all_true"),
+        }
+    }
+    assert {
+        result == true
+    }
+}
+
+test golden "verify_isolation_lex_violation" {
+    input {
+        proof: IsolationProof {
+            product_a_context: "files",
+            product_b_context: "git",
+            keys_independent: true,
+            lex_isolated: false,
+            metering_isolated: true,
+            telemetry_isolated: true,
+            proof_hash: sha3_256("files:git:lex_false"),
+        }
+    }
+    assert {
+        result == false
+    }
+}
+
+test golden "build_isolation_proof_complete" {
+    setup {
+        let seed = bytes(32, 0xBB)
+        let ctx_a = ProductContext {
+            product_name: "messenger",
+            hkdf_context: "poly-messenger-v1",
+            lex_namespace: "lex://poly/messenger/",
+            metering_namespace: "meter://poly/messenger/",
+            telemetry_context: "poly-messenger-telemetry-v1",
+        }
+        let ctx_b = ProductContext {
+            product_name: "mail",
+            hkdf_context: "poly-mail-v1",
+            lex_namespace: "lex://poly/mail/",
+            metering_namespace: "meter://poly/mail/",
+            telemetry_context: "poly-mail-telemetry-v1",
+        }
+    }
+    input {
+        master_seed: seed
+        ctx_a: ctx_a
+        ctx_b: ctx_b
+    }
+    assert {
+        result.keys_independent == true
+        result.lex_isolated == true
+        result.metering_isolated == true
+        result.telemetry_isolated == true
+        len(result.proof_hash) == 32
+    }
+}
+
+fuzz_target "derive_product_keys_fuzz" {
+    inputs {
+        master_seed: bytes(32)
+        product_name: string(1..256)
+    }
+    assert {
+        no_panic
+        constant_time true
+    }
+}
+
+fuzz_target "build_isolation_proof_fuzz" {
+    inputs {
+        master_seed: bytes(32)
+        product_a: string(1..128)
+        product_b: string(1..128)
+    }
+    assert {
+        no_panic
+        constant_time true
+    }
+}

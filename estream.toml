@@ -1,0 +1,43 @@
+[package]
+name = "polykit"
+version = "0.11.0"
+description = "Shared SDK for all Poly Labs products — identity, metering, rate limiting, governance, zero-linkage privacy"
+lex = "esn/global/org/polylabs"
+
+[platform]
+estream = "0.11.0"
+target = ["wasm_client", "alpha_devnet"]
+
+[circuits]
+path = "circuits/fl"
+count = 22
+
+[circuits.groups]
+core = ["polykit_identity", "polykit_metering", "polykit_rate_limiter", "polykit_blind_telemetry"]
+compliance = ["polykit_sanitize", "polykit_governance"]
+intelligence = ["polykit_li_effects", "polykit_delta_curate"]
+regional = ["polykit_regional_us", "polykit_regional_eu"]
+apps = ["polykit_media_stream", "polykit_crdt_sync", "polykit_blind_relay", "polykit_classified_fusion"]
+zero_linkage = ["polykit_zero_linkage", "polykit_blinded_billing", "polykit_bridge"]
+graphs = ["polykit_user_graph", "polykit_metering_graph", "polykit_subscription_lifecycle"]
+
+[telemetry]
+context = "poly-polykit-telemetry-v1"
+blind = true
+cohort_min = 50
+aggregate_window_ms = 3600000
+
+[transport]
+protocol = "wire-udp"
+port = 5000
+quic_port = 4433
+
+[security]
+signing = "ml-dsa-87"
+encryption = "ml-kem-1024"
+hkdf = "sha3-256"
+zero_linkage = true
+
+[deployment]
+node = "alpha-devnet"
+endpoint = "estream://136.113.92.232:5000/polylabs-dev/polykit"

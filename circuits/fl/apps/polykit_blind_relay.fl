@@ -20,20 +20,46 @@ type Message = bytes(4096)
 type RelayId = bytes(32)
 type SessionId = bytes(32)
 
-type RelayResult = struct {
+data RelayResult : polykit v1 {
     delivered: bool,
     relay_hash: bytes(32),
     hops: u32,
 }
+    store kv
+    govern lex esn/global/org/polylabs/session
+    cortex {
+        redact [encrypted_message]
+    }
 
-type PlatformMetrics = struct {
+data PlatformMetrics : polykit v1 {
     active_sessions: u64,
     messages_per_sec: u64,
     avg_latency_ms: u64,
     network_healthy: bool,
 }
+    store kv
+    govern lex esn/global/org/polylabs
+    cortex {
+        infer on_read
+        on_anomaly alert "relay-team"
+    }
+
+// ── Streams ─────────────────────────────────────────────────────────
+
+stream relay_events {
+    event message_relayed {
+        session_id: bytes(32),
+        latency_ms: u64,
+    }
+    event cover_generated {
+        count: u32,
+    }
+}
+    retention 30d
+    consumers [streamsight]
 
 // --- Relay an encrypted message through the blind network ---
+@guard(block_on: relay_session_expired)
 circuit relay_message(msg: Message, dest: bytes(32), session: SessionId, pk: bytes(1568)) -> RelayResult
     profile poly_framework_standard
     lex esn/global/org/polylabs/session
@@ -42,8 +68,10 @@ circuit relay_message(msg: Message, dest: bytes(32), session: SessionId, pk: byt
     constant_time true
     meters [compute_cycles, bandwidth]
     observe metrics: [messages_relayed, relay_latency_ms]
+    cortex policy: relay_isolation
     invariant "message_encrypted" { encrypted_size >= msg_size }
     invariant "constant_time_relay" { timing_variance < 1000 }
+    property safety "no_plaintext_relay" { message is always encrypted }
     fuzz_target
 {
     let msg_hash = sha3_256(msg)
@@ -91,7 +119,7 @@ circuit platform_health(query: bytes(256), pk: bytes(1568)) -> PlatformMetrics
     property safety "session_isolation" { no_cross_session_data }
     monitor "network_health" { avg_latency_ms < 500 }
     esz_emit "verify/polylabs_health.esz"
-    li_feed full_escir true, optimized_ir true, optimization_metadata true
+    ai_feed full_escir true, optimized_ir true, optimization_metadata true
 {
     let query_hash = sha3_256(query)
     let kem = mlkem_encaps(pk)

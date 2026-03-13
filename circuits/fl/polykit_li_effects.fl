@@ -4,30 +4,46 @@
 // Reusable by any Poly app that needs content classification:
 // Poly Data (file tagging), Poly Mail (sensitivity), Poly Messenger (routing).
 
-type ClassificationSuggestion = struct {
+data ClassificationSuggestion : polykit v1 {
     tag: string,
     confidence: u64,
     alternatives: [Alternative; 5],
 }
+    store kv
+    govern lex esn/global/org/polylabs
+    cortex {
+        infer on_write,
+        on_anomaly alert "li-classification-team"
+    }
 
-type Alternative = struct {
+data Alternative : polykit v1 {
     tag: string,
     confidence: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs
 
-type HumanFeedback = struct {
+data HumanFeedback : polykit v1 {
     sample_hash: bytes(32),
     rating: u8,
     correction: string,
     reviewer_hash: bytes(32),
     timestamp_ms: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs
+    cortex {
+        redact [reviewer_hash],
+        infer on_write
+    }
 
-type ConfidenceThresholds = struct {
+data ConfidenceThresholds : polykit v1 {
     auto_accept: u64,
     review_required: u64,
     auto_reject: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs
 
 stream classification_events: event<ClassificationSuggestion>
     classify tag {
@@ -43,6 +59,9 @@ circuit classify_content(content: bytes, filename: string, metadata: bytes(256))
     profile poly_framework_standard
     observe metrics: [classifications, confidence_distribution, auto_accept_rate]
     monitor "confidence_drift" { avg_confidence > 0.60 }
+    cortex on_anomaly: misclassification_alert
+    property safety "classification_accuracy" { confidence >= min_threshold }
+    ai_feed full_escir true, optimized_ir true, optimization_metadata true
     feedback classification_events -> li_train
     test golden "classify_basic_content" {
         let suggestion = classify_content(bytes(128, 0xAA), "test.txt", bytes(256, 0x00))
