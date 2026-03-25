@@ -28,13 +28,24 @@ platform polykit_framework v1 {
     import polykit_metering_graph from "./polykit_metering_graph.fl"
     import polykit_subscription_lifecycle from "./polykit_subscription_lifecycle.fl"
 
+    import polykit_studio_document from "./polykit_studio_document.fl"
+    import polykit_studio_graph from "./polykit_studio_graph.fl"
+    import polykit_media from "./polykit_media.fl"
+    import polykit_compliance from "./polykit_compliance.fl"
+    import polykit_collaboration from "./polykit_collaboration.fl"
+    import polykit_ci from "./polykit_ci.fl"
+    import polykit_wallet from "./polykit_wallet.fl"
+    import polykit_sensor from "./polykit_sensor.fl"
+
     group core [polykit_identity, polykit_metering, polykit_rate_limiter, polykit_blind_telemetry]
-    group compliance [polykit_sanitize, polykit_governance]
+    group compliance [polykit_sanitize, polykit_governance, polykit_compliance]
     group intelligence [polykit_li_effects, polykit_delta_curate]
     group regional [polykit_regional_us, polykit_regional_eu]
     group apps [polykit_media_stream, polykit_crdt_sync, polykit_blind_relay, polykit_classified_fusion]
     group zero_linkage [polykit_zero_linkage, polykit_blinded_billing, polykit_bridge]
     group graphs [polykit_user_graph, polykit_metering_graph, polykit_subscription_lifecycle]
+    group studio [polykit_studio_document, polykit_studio_graph, polykit_collaboration]
+    group composition [polykit_media, polykit_ci, polykit_wallet, polykit_sensor]
 
     connect polykit_identity -> polykit_metering
     connect polykit_metering -> polykit_rate_limiter
@@ -47,6 +58,28 @@ platform polykit_framework v1 {
     connect polykit_user_graph -> polykit_metering
     connect polykit_metering_graph -> polykit_metering
     connect polykit_subscription_lifecycle -> polykit_metering
+
+    connect polykit_studio_document -> polykit_identity
+    connect polykit_studio_document -> polykit_metering
+    connect polykit_studio_document -> polykit_zero_linkage
+    connect polykit_studio_graph -> polykit_identity
+    connect polykit_studio_graph -> polykit_metering
+    connect polykit_media -> polykit_identity
+    connect polykit_media -> polykit_metering
+    connect polykit_media -> polykit_zero_linkage
+    connect polykit_compliance -> polykit_identity
+    connect polykit_compliance -> polykit_metering
+    connect polykit_compliance -> polykit_sanitize
+    connect polykit_collaboration -> polykit_identity
+    connect polykit_collaboration -> polykit_metering
+    connect polykit_collaboration -> polykit_zero_linkage
+    connect polykit_ci -> polykit_identity
+    connect polykit_ci -> polykit_metering
+    connect polykit_wallet -> polykit_identity
+    connect polykit_wallet -> polykit_metering
+    connect polykit_wallet -> polykit_zero_linkage
+    connect polykit_sensor -> polykit_identity
+    connect polykit_sensor -> polykit_metering
 
     bind polykit_li_effects -> li_engine
 

@@ -1,0 +1,397 @@
+/// PolyKit Studio Document — PQ-encrypted document editing composition
+///
+/// Composes eStream's document_editor.fl + document.fl + pdf.fl + docx.fl + pptx.fl
+/// with PolyKit identity, classification, metering, and zero-linkage isolation.
+/// WYSIWYG editing for all document formats with per-product key isolation.
+///
+/// Products: Docs, Slides, Sheets, Notes, Sign, Mail, Git
+///
+/// Lex Architecture:
+///   esn/global/org/polylabs/studio/document
+///   Per-session sub-lex for document state, undo history, and render cache.
+///   Only aggregate metrics (edit counts, render latency) fan up to platform level.
+///
+/// govern lex esn/global/org/polylabs/studio/document
+
+import polykit_identity from "./polykit_identity.fl"
+import polykit_metering from "./polykit_metering.fl"
+import polykit_zero_linkage from "./polykit_zero_linkage.fl"
+import polykit_governance from "./polykit_governance.fl"
+
+// ── Types ────────────────────────────────────────────────────────────
+
+type DocumentId = bytes(32)
+type PageIndex = u32
+type FormatOp = bytes(512)
+
+type DocumentFormat = enum {
+    Pdf,
+    Docx,
+    Pptx,
+    Xlsx,
+    Markdown,
+    RichText,
+}
+
+type ClassificationLevel = enum {
+    Public,
+    Internal,
+    Confidential,
+    Restricted,
+}
+
+// ── Data Declarations with Stratum + Cortex ─────────────────────────
+
+data DocumentSession : polykit v1 {
+    session_id: bytes(32),
+    document_id: DocumentId,
+    user_id: bytes(16),
+    format: DocumentFormat,
+    encryption_key_hash: bytes(32),
+    classification: ClassificationLevel,
+    opened_at_ms: u64,
+    last_edit_ms: u64,
+    page_count: u32,
+    dirty: bool,
+}
+    store kv
+    govern lex esn/global/org/polylabs/studio/document
+    cortex {
+        redact [encryption_key_hash]
+        infer on_write
+        on_anomaly alert "studio-team"
+    }
+
+data DocumentPermission : polykit v1 {
+    document_id: DocumentId,
+    user_id: bytes(16),
+    can_read: bool,
+    can_write: bool,
+    can_share: bool,
+    can_classify: bool,
+    granted_by: bytes(16),
+    granted_at_ms: u64,
+    expires_at_ms: u64,
+}
+    store kv
+    govern lex esn/global/org/polylabs/studio/document
+    cortex {
+        infer on_read
+    }
+
+data DocumentMetrics : polykit v1 {
+    document_id: DocumentId,
+    total_edits: u64,
+    total_renders: u64,
+    total_saves: u64,
+    format_ops: u64,
+    bytes_written: u64,
+    last_operation_ms: u64,
+}
+    store kv
+    govern lex esn/global/org/polylabs/studio/document
+    cortex {
+        infer on_write
+    }
+
+// ── Streams ─────────────────────────────────────────────────────────
+
+stream document_events {
+    event document_opened { document_id: bytes(32), format: string }
+    event document_saved { document_id: bytes(32), bytes_written: u64 }
+    event document_classified { document_id: bytes(32), level: string }
+    event format_applied { document_id: bytes(32), op_type: string }
+}
+    retention 90d
+    consumers [streamsight, metering, governance]
+
+// ── Series ──────────────────────────────────────────────────────────
+
+series document_series {
+    over DocumentMetrics,
+    fields: [total_edits, total_renders, total_saves, format_ops]
+}
+
+// ── Core Circuits ───────────────────────────────────────────────────
+
+/// Open a document session with PQ-encrypted key derivation per product context.
+/// The session key is derived via HKDF from the user's product-scoped SPARK identity.
+@guard(block_on: permission_denied)
+circuit open_document(
+    user_id: bytes(16),
+    document_id: DocumentId,
+    format: DocumentFormat,
+    product_context: string,
+) -> DocumentSession
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/studio/document
+    precision B
+    observe metrics: [documents_opened, session_creations]
+    monitor "open_latency" { open_latency_ms < 500 }
+    invariant "user_authenticated" { len(user_id) == 16 }
+    invariant "document_exists" { len(document_id) == 32 }
+    property safety "session_key_isolated" { session_key derived from product_context }
+    property liveness "session_created" { eventually(session_id != null) }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, eslite_query, stream_emit, now]
+    test golden "open_pdf_document" {
+        let uid = bytes(16, 0x01)
+        let did = bytes(32, 0xAA)
+        let result = open_document(uid, did, DocumentFormat::Pdf, "poly-docs-v1")
+        assert len(result.session_id) == 32
+        assert result.format == DocumentFormat::Pdf
+        assert result.dirty == false
+    }
+{
+    let ts = now()
+    let perm = eslite_query("doc_permissions", concat(document_id, user_id))
+    if perm == null or !perm.can_read {
+        guard_fail(permission_denied)
+    }
+
+    let session_seed = concat(user_id, document_id, encode(product_context))
+    let session_id = sha3_256(session_seed)
+    let key_material = hkdf_sha3(user_id, encode(product_context), 32)
+    let key_hash = sha3_256(key_material)
+
+    let session = DocumentSession {
+        session_id: session_id,
+        document_id: document_id,
+        user_id: user_id,
+        format: format,
+        encryption_key_hash: key_hash,
+        classification: ClassificationLevel::Internal,
+        opened_at_ms: ts,
+        last_edit_ms: ts,
+        page_count: 0,
+        dirty: false,
+    }
+
+    eslite_insert("doc_sessions", session_id, session)
+    emit(document_events, { document_opened: { document_id: document_id, format: encode(format) } })
+
+    let dims = polykit_metering::DimensionValues { executions: 1, hashes: 1, bandwidth: 0, storage: 0, observables: 1, proofs: 0, circuits: 1, mpc_sessions: 0 }
+    polykit_metering::record_usage(user_id, "open_document", dims)
+
+    zeroize(key_material)
+    session
+}
+
+/// Save document content encrypted under the session's PQ key.
+@guard(block_on: save_failed)
+circuit save_document(
+    session: DocumentSession,
+    content: bytes,
+) -> DocumentMetrics
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/studio/document
+    precision B
+    observe metrics: [documents_saved, bytes_written]
+    monitor "save_latency" { save_latency_ms < 2000 }
+    invariant "session_valid" { len(session.session_id) == 32 }
+    invariant "content_nonempty" { len(content) > 0 }
+    property safety "content_encrypted_at_rest" { stored content is always encrypted }
+    meters [compute_cycles, memory_bytes, storage]
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let ts = now()
+    let encrypted = aes_gcm_encrypt(session.encryption_key_hash, sha3_256(session.session_id), content, session.document_id)
+    eslite_insert("doc_content", session.document_id, encrypted)
+
+    let metrics = DocumentMetrics {
+        document_id: session.document_id,
+        total_edits: 0,
+        total_renders: 0,
+        total_saves: 1,
+        format_ops: 0,
+        bytes_written: len(content) as u64,
+        last_operation_ms: ts,
+    }
+
+    eslite_insert("doc_metrics", session.document_id, metrics)
+    emit(document_events, { document_saved: { document_id: session.document_id, bytes_written: len(content) as u64 } })
+
+    let dims = polykit_metering::DimensionValues { executions: 1, hashes: 0, bandwidth: len(content) as u64, storage: len(content) as u64, observables: 1, proofs: 0, circuits: 1, mpc_sessions: 0 }
+    polykit_metering::record_usage(session.user_id, "save_document", dims)
+
+    metrics
+}
+
+/// Render a specific page of the document for display.
+circuit render_page(
+    session: DocumentSession,
+    page: PageIndex,
+    viewport_width: u32,
+    viewport_height: u32,
+) -> bytes
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/studio/document
+    precision B
+    observe metrics: [pages_rendered, render_latency_us]
+    monitor "render_latency" { render_latency_us < 100000 }
+    invariant "page_in_range" { page < session.page_count or session.page_count == 0 }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_query]
+{
+    let content = eslite_query("doc_content", session.document_id)
+    let rendered = match session.format {
+        DocumentFormat::Pdf => pdf_render(content, page, viewport_width, viewport_height),
+        DocumentFormat::Docx => docx_render(content, page, viewport_width, viewport_height),
+        DocumentFormat::Pptx => pptx_render(content, page, viewport_width, viewport_height),
+        DocumentFormat::Xlsx => xlsx_render(content, page, viewport_width, viewport_height),
+        DocumentFormat::Markdown => md_render(content, page, viewport_width, viewport_height),
+        DocumentFormat::RichText => rt_render(content, page, viewport_width, viewport_height),
+    }
+    rendered
+}
+
+/// Apply a formatting operation (bold, italic, font, etc.) to the document.
+circuit apply_format(
+    session: DocumentSession,
+    op: FormatOp,
+    selection_start: u64,
+    selection_end: u64,
+) -> DocumentSession
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/studio/document
+    precision B
+    observe metrics: [format_ops_applied, undo_stack_depth]
+    invariant "valid_selection" { selection_start <= selection_end }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let ts = now()
+    let content = eslite_query("doc_content", session.document_id)
+    let formatted = document_apply_format(content, op, selection_start, selection_end)
+    eslite_insert("doc_content", session.document_id, formatted)
+    emit(document_events, { format_applied: { document_id: session.document_id, op_type: encode(op) } })
+
+    DocumentSession {
+        session_id: session.session_id,
+        document_id: session.document_id,
+        user_id: session.user_id,
+        format: session.format,
+        encryption_key_hash: session.encryption_key_hash,
+        classification: session.classification,
+        opened_at_ms: session.opened_at_ms,
+        last_edit_ms: ts,
+        page_count: session.page_count,
+        dirty: true,
+    }
+}
+
+/// Classify a document's sensitivity level, enforced by governance.
+@guard(block_on: classification_violation)
+circuit classify_document(
+    session: DocumentSession,
+    level: ClassificationLevel,
+) -> DocumentSession
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/studio/document
+    precision B
+    observe metrics: [classifications_applied, classification_upgrades]
+    invariant "no_downgrade" { level >= session.classification }
+    property safety "classification_monotonic" { new_level >= old_level }
+    cortex policy: document_classification
+    cortex on_anomaly: classification_downgrade_alert
+    meters [compute_cycles]
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let ts = now()
+    emit(document_events, { document_classified: { document_id: session.document_id, level: encode(level) } })
+
+    DocumentSession {
+        session_id: session.session_id,
+        document_id: session.document_id,
+        user_id: session.user_id,
+        format: session.format,
+        encryption_key_hash: session.encryption_key_hash,
+        classification: level,
+        opened_at_ms: session.opened_at_ms,
+        last_edit_ms: ts,
+        page_count: session.page_count,
+        dirty: session.dirty,
+    }
+}
+
+/// Record metering dimensions for document operations (batch meter).
+circuit meter_document_ops(
+    user_id: bytes(16),
+    edits: u64,
+    renders: u64,
+    saves: u64,
+    bytes_written: u64,
+) -> polykit_metering::MeteringRecord
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/studio/document
+    observe metrics: [metering_batches]
+    meters [compute_cycles]
+{
+    let dims = polykit_metering::DimensionValues {
+        executions: edits + renders + saves,
+        hashes: saves,
+        bandwidth: bytes_written,
+        storage: bytes_written,
+        observables: edits + renders,
+        proofs: 0,
+        circuits: edits + renders + saves,
+        mpc_sessions: 0,
+    }
+    polykit_metering::record_usage(user_id, "document_batch", dims)
+}
+
+// ── Test / KAT / Fuzz annotations ──────────────────────────────────
+
+test golden "open_and_save_document" {
+    setup {
+        let uid = bytes(16, 0x01)
+        let did = bytes(32, 0xAA)
+    }
+    input {
+        user_id: uid
+        document_id: did
+        format: DocumentFormat::Docx
+        product_context: "poly-docs-v1"
+    }
+    assert {
+        let session = result
+        len(session.session_id) == 32
+        session.dirty == false
+    }
+}
+
+test golden "classify_document_upgrade" {
+    setup {
+        let session = DocumentSession {
+            session_id: bytes(32, 0x01),
+            document_id: bytes(32, 0xAA),
+            user_id: bytes(16, 0x01),
+            format: DocumentFormat::Pdf,
+            encryption_key_hash: bytes(32, 0xBB),
+            classification: ClassificationLevel::Internal,
+            opened_at_ms: 1000,
+            last_edit_ms: 1000,
+            page_count: 5,
+            dirty: false,
+        }
+    }
+    input {
+        session: session
+        level: ClassificationLevel::Confidential
+    }
+    assert {
+        result.classification == ClassificationLevel::Confidential
+    }
+}
+
+fuzz_target "open_document_fuzz" {
+    inputs {
+        user_id: bytes(16)
+        document_id: bytes(32)
+        format: u8(0..5)
+        product_context: string(1..128)
+    }
+    assert {
+        no_panic
+    }
+}
