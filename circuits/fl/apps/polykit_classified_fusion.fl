@@ -56,7 +56,7 @@ circuit sci_omniscient(query: FusionQuery, corpus: Corpus, pk: bytes(1568)) -> F
     critical_path
     fuzz_target
     @serialize "verify/classified_fusion.esz"
-    ai_feed full_escir true, optimized_ir true, optimization_metadata true
+    ai_feed full_flir true, optimized_ir true, optimization_metadata true
     test golden "sci_omniscient_basic" {
         let result = sci_omniscient(bytes(4096, 0xAA), bytes(32, 0xBB), bytes(1568, 0xCC))
         assert result.anomaly_detected == true

@@ -90,7 +90,7 @@ platform polykit_framework v1 {
 
     @observe true
     @serialize "verify/polykit_platform.esz"
-    ai_feed full_escir true, optimized_ir true, optimization_metadata true
+    ai_feed full_flir true, optimized_ir true, optimization_metadata true
 
     target wasm_client
     target alpha_devnet

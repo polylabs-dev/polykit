@@ -1,7 +1,7 @@
 //! PolyKit WASM Entry Point
 //!
 //! Thin wasm-bindgen shim that routes JS calls to codegen'd circuit exports.
-//! Most exports are auto-generated from FastLang circuits via ESCIR codegen.
+//! Most exports are auto-generated from FastLang circuits via FLIR codegen.
 //!
 //! In the production pipeline, this crate is compiled via:
 //!   estream-dev build-wasm-client --from-fl circuits/fl/ --sign key.pem --enforce-budget
@@ -26,7 +26,7 @@ pub fn init_app(app_id: &str, hkdf_context: &str, lex_namespace: &str, demo_mode
     .to_string()
 }
 
-// --- ESCIR ABI Required Export ---
+// --- FLIR ABI Required Export ---
 
 #[wasm_bindgen]
 pub fn evaluate(context_ptr: i32) -> i32 {

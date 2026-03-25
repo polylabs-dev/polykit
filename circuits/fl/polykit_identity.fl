@@ -67,7 +67,7 @@ circuit derive_keys(master_seed: MasterSeed, hkdf_context: bytes(64)) -> Derived
     invariant "seed_minimum_entropy" { len(master_seed) >= 32 }
     invariant "key_isolation" { signing_seed != encryption_seed }
     property liveness "keys_eventually_derived" { eventually(key_derivations > 0) }
-    ai_feed full_escir true, optimized_ir true, optimization_metadata true
+    ai_feed full_flir true, optimized_ir true, optimization_metadata true
     fuzz_target
     @golden_test "spark_derivation_v1" {
         input master_seed = 0x[0000000000000000000000000000000000000000000000000000000000000001]

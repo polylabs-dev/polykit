@@ -61,7 +61,7 @@ circuit classify_content(content: bytes, filename: string, metadata: bytes(256))
     monitor "confidence_drift" { avg_confidence > 0.60 }
     cortex on_anomaly: misclassification_alert
     property safety "classification_accuracy" { confidence >= min_threshold }
-    ai_feed full_escir true, optimized_ir true, optimization_metadata true
+    ai_feed full_flir true, optimized_ir true, optimization_metadata true
     feedback classification_events -> li_train
     test golden "classify_basic_content" {
         let suggestion = classify_content(bytes(128, 0xAA), "test.txt", bytes(256, 0x00))

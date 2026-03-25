@@ -299,7 +299,7 @@ circuit emit_blinded_telemetry(
     property safety "no_content_leak" { batch contains only numeric aggregates }
     property liveness "eventually_emits" { eventually(batches_emitted > 0) when cohort healthy }
     @serialize "verify/polykit_blind_telemetry.esz"
-    ai_feed full_escir true, optimized_ir true, optimization_metadata true
+    ai_feed full_flir true, optimized_ir true, optimization_metadata true
     meters [compute_cycles, memory_bytes, bandwidth_bytes]
     wasm_abi [eslite_insert, stream_emit, now]
     fuzz_target

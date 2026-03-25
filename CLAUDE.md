@@ -18,7 +18,7 @@ PolyKit is the shared framework for all Poly Labs apps (Poly Files, Poly Messeng
 
 - **8 new composition circuits** added for cross-product infrastructure (zero-linkage bridge, blinded billing, classified fusion, CRDT sync, media stream, blind relay, regional compliance US/EU)
 - Total circuit count: 30 (22 original + 8 new composition circuits)
-- FLIR codegen now handles all compilation; ESCIR references are obsolete
+- FLIR codegen now handles all compilation
 
 ## Structure
 

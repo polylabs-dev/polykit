@@ -3,7 +3,7 @@
 **Version**: 0.3.0
 **Date**: February 2026
 **Platform**: eStream v0.8.3
-**Build Pipeline**: FastLang (.fl) → ESCIR → Rust/WASM codegen → .escd
+**Build Pipeline**: FastLang (.fl) → FLIR → Rust/WASM codegen → .escd
 
 ---
 
@@ -48,7 +48,7 @@ PolyKit composes eStream platform graphs rather than duplicating them. The RBAC 
 │  TS does: DOM mount, canvas render, browser events               │
 │  TS does NOT: crypto, state, data transforms, protocol framing   │
 ├──────────────────────────────────────────────────────────────────┤
-│  polykit.wasm (FastLang → ESCIR → Rust/WASM codegen)            │
+│  polykit.wasm (FastLang → FLIR → Rust/WASM codegen)            │
 │                                                                  │
 │  circuits/fl/*.fl      10 circuits + 3 graph circuits            │
 │  circuits/fl/apps/*.fl 4 app-level circuits                      │
@@ -66,9 +66,9 @@ PolyKit composes eStream platform graphs rather than duplicating them. The RBAC 
 
 FastLang-native build (v0.8.3):
 
-1. FastLang circuits (`circuits/fl/*.fl`) → parse, type-check, lower to ESCIR
-2. ESCIR optimization passes (O2)
-3. Rust codegen (auto-generated from ESCIR)
+1. FastLang circuits (`circuits/fl/*.fl`) → parse, type-check, lower to FLIR
+2. FLIR optimization passes (O2)
+3. Rust codegen (auto-generated from FLIR)
 4. `cargo build --target wasm32-unknown-unknown` (LTO, opt-level=z)
 5. `wasm-opt -Oz` (dead code elimination)
 6. ABI validation (required: `evaluate`; optional: `alloc`, `dealloc`, `circuit_name`, `circuit_version`)
@@ -467,7 +467,7 @@ The bridge is:
 | [ESTREAM_GETTING_STARTED.md](ESTREAM_GETTING_STARTED.md) | Getting started with eStream + PolyKit |
 | [FastLang Spec](https://github.com/polyquantum/estream/blob/main/specs/protocol/FASTLANG_SPEC.md) | Canonical FastLang language specification |
 | [Graph Spec](https://github.com/polyquantum/estream/blob/main/specs/protocol/GRAPH_SPEC.md) | Graph/DAG construct specification |
-| [ESCIR WASM Client Spec](https://github.com/polyquantum/estream/blob/main/specs/architecture/ESCIR_WASM_CLIENT_SPEC.md) | Full WASM client specification |
+| [FLIR WASM Client Spec](https://github.com/polyquantum/estream/blob/main/specs/architecture/FLIR_WASM_CLIENT_SPEC.md) | Full WASM client specification |
 | [rbac.fl](https://github.com/polyquantum/estream/blob/main/circuits/graphs/rbac.fl) | Upstream RBAC graph (composed by PolyKit) |
 | [group_hierarchy.fl](https://github.com/polyquantum/estream/blob/main/circuits/graphs/group_hierarchy.fl) | Upstream org hierarchy graph |
 | [Epic](../.github/epics/EPIC_POLYKIT_FASTLANG_REFACTOR.md) | Tracking epic for this refactor |

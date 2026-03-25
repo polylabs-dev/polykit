@@ -4,22 +4,22 @@
 > **Date**: February 2026
 > **Platform**: eStream v0.8.3
 > **Epic**: [EPIC_POLYKIT_FASTLANG_REFACTOR](../.github/epics/EPIC_POLYKIT_FASTLANG_REFACTOR.md)
-> **Previous**: [ARCHITECTURE.md](ARCHITECTURE.md) (v0.1.0, ESCIR YAML)
+> **Previous**: [ARCHITECTURE.md](ARCHITECTURE.md) (v0.1.0, FLIR YAML)
 
 ---
 
 ## Current State
 
-PolyKit v0.1.0 defines 6 shared circuits as `.escir.yaml` files at ESCIR v0.8.1:
+PolyKit v0.1.0 defines 6 shared circuits as `.flir.yaml` files at FLIR v0.8.1:
 
 | Circuit | YAML File | Exports | Purpose |
 |---------|-----------|---------|---------|
-| polykit-identity | `circuits/polykit-identity/circuit.escir.yaml` | 6 | SPARK auth + HKDF key derivation |
-| polykit-metering | `circuits/polykit-metering/circuit.escir.yaml` | 3 | 8-dimension resource metering |
-| polykit-telemetry | `circuits/polykit-telemetry/circuit.escir.yaml` | 4 | StreamSight "Discard Normal" |
-| polykit-rate-limiter | `circuits/polykit-rate-limiter/circuit.escir.yaml` | 2 | FIFO rate limiter |
-| polykit-sanitize | `circuits/polykit-sanitize/circuit.escir.yaml` | 2 | 3-stage PII/PCI/HIPAA/GDPR |
-| polykit-li_effects-classify | `circuits/polykit-li_effects-classify/circuit.escir.yaml` | 3 | ML classification + human-in-loop |
+| polykit-identity | `circuits/polykit-identity/circuit.flir.yaml` | 6 | SPARK auth + HKDF key derivation |
+| polykit-metering | `circuits/polykit-metering/circuit.flir.yaml` | 3 | 8-dimension resource metering |
+| polykit-telemetry | `circuits/polykit-telemetry/circuit.flir.yaml` | 4 | StreamSight "Discard Normal" |
+| polykit-rate-limiter | `circuits/polykit-rate-limiter/circuit.flir.yaml` | 2 | FIFO rate limiter |
+| polykit-sanitize | `circuits/polykit-sanitize/circuit.flir.yaml` | 2 | 3-stage PII/PCI/HIPAA/GDPR |
+| polykit-li_effects-classify | `circuits/polykit-li_effects-classify/circuit.flir.yaml` | 3 | ML classification + human-in-loop |
 
 These are declarative YAML: they define types, exports, and emissions but contain **no computation logic**. The hand-written Rust in `crates/` implements the actual behavior (~2,500 lines across 5 crates). Additionally, 4 FastLang `.fl` files exist in `estream-io/crates/estream-fastlang/examples/polylabs/` (media_stream, crdt_sync, blind_relay, classified_fusion) serving as platform-level golden sources.
 
@@ -27,7 +27,7 @@ These are declarative YAML: they define types, exports, and emissions but contai
 
 ## Target State
 
-**FastLang becomes the single source of truth for all PolyKit circuits.** The `.escir.yaml` files are retired. FastLang generates the Rust implementation, the WASM binaries, and the type bindings -- replacing both the YAML definitions and much of the hand-written Rust crate code.
+**FastLang becomes the single source of truth for all PolyKit circuits.** The `.flir.yaml` files are retired. FastLang generates the Rust implementation, the WASM binaries, and the type bindings -- replacing both the YAML definitions and much of the hand-written Rust crate code.
 
 Key changes:
 - 6 YAML circuits become **10 core `.fl` files + 4 app-level circuits** (telemetry eliminated, regional + app circuits added)
@@ -37,13 +37,13 @@ Key changes:
 - **LI Effects** (Learned Intelligence): `li_classify`, `li_embed`, `li_infer`, `li_train` builtins
 - Hand-written Rust shrinks from ~2,500 to ~600 lines (kernel + shim)
 - ~1,400 lines of `.fl` generate the rest via codegen
-- Build pipeline: `.fl` -> ESCIR -> Rust/WASM/TypeScript codegen -> `.escd`
+- Build pipeline: `.fl` -> FLIR -> Rust/WASM/TypeScript codegen -> `.escd`
 
 ---
 
 ## Design Principle
 
-Same as v0.1.0: **Push everything into Rust/WASM. TypeScript is ONLY a DOM binding layer.** What changes is the *source*: FastLang `.fl` files replace both ESCIR YAML and hand-written Rust for circuit logic. The codegen pipeline produces the same WASM outputs.
+Same as v0.1.0: **Push everything into Rust/WASM. TypeScript is ONLY a DOM binding layer.** What changes is the *source*: FastLang `.fl` files replace both FLIR YAML and hand-written Rust for circuit logic. The codegen pipeline produces the same WASM outputs.
 
 ---
 
@@ -59,7 +59,7 @@ Same as v0.1.0: **Push everything into Rust/WASM. TypeScript is ONLY a DOM bindi
 │  ├── useWasmEmit           emits via WASM wire client            │
 │  └── WidgetShell           layout + RBAC gate                    │
 ├──────────────────────────────────────────────────────────────────┤
-│  polykit.wasm (FastLang → ESCIR → Rust/WASM codegen)            │
+│  polykit.wasm (FastLang → FLIR → Rust/WASM codegen)            │
 │                                                                  │
 │  circuits/fl/*.fl          8 circuits + 1 platform composition   │
 │  polykit-core              thin kernel (AppContext, helpers)      │
@@ -109,7 +109,7 @@ Every circuit inheriting `poly_framework_standard` gets baseline StreamSight tel
 
 ## Inline StreamSight Telemetry (No Separate Circuit)
 
-The `polykit-telemetry/circuit.escir.yaml` is **not converted to its own `.fl` file**. StreamSight is designed to be native and inline -- the FastLang compiler automatically weaves telemetry into generated code. This matches the pattern used across all 47 `.fl` files in estream-io.
+The `polykit-telemetry/circuit.flir.yaml` is **not converted to its own `.fl` file**. StreamSight is designed to be native and inline -- the FastLang compiler automatically weaves telemetry into generated code. This matches the pattern used across all 47 `.fl` files in estream-io.
 
 | Mechanism | Syntax | Applied Where | Effect |
 |-----------|--------|---------------|--------|
@@ -118,7 +118,7 @@ The `polykit-telemetry/circuit.escir.yaml` is **not converted to its own `.fl` f
 | Anomaly detection | `streamsight_anomaly(value)` | In circuit bodies | Checks value against learned baseline |
 | Baseline retrieval | `streamsight_baseline("metric")` | In circuit bodies | Retrieves baseline statistics |
 | Verification artifact | `esz_emit "path"` | Circuits needing PoVC evidence | Emits .esz file |
-| LI pipeline feed | `li_feed full_escir true` | Circuits feeding LI | Streams IR to LI for optimization |
+| LI pipeline feed | `li_feed full_flir true` | Circuits feeding LI | Streams IR to LI for optimization |
 
 The profile provides baseline telemetry. Individual circuits add domain-specific metrics. The Rust codegen auto-generates a `{CircuitName}StreamSight` struct; WASM codegen adds `streamsight_emit`, `streamsight_anomaly`, `streamsight_baseline` as host imports.
 
@@ -128,7 +128,7 @@ The profile provides baseline telemetry. Individual circuits add domain-specific
 
 ### Circuit 1: Identity (`polykit_identity.fl`)
 
-Replaces `circuits/polykit-identity/circuit.escir.yaml` AND most of `crates/polykit-core/src/identity.rs` + `crypto.rs`.
+Replaces `circuits/polykit-identity/circuit.flir.yaml` AND most of `crates/polykit-core/src/identity.rs` + `crypto.rs`.
 
 ```fastlang
 type MasterSeed = bytes(32)
@@ -208,7 +208,7 @@ circuit encapsulate_key(recipient_pk: bytes(1568)) -> EncapsulatedKey
 
 ### Circuit 2: Metering (`polykit_metering.fl`)
 
-Replaces `circuits/polykit-metering/circuit.escir.yaml` AND `crates/polykit-core/src/metering.rs`.
+Replaces `circuits/polykit-metering/circuit.flir.yaml` AND `crates/polykit-core/src/metering.rs`.
 
 ```fastlang
 type MeteringDimension = enum {
@@ -262,7 +262,7 @@ circuit check_limits(current: DimensionValues, limits: DimensionValues) -> [Mete
 
 ### Circuit 3: Rate Limiter (`polykit_rate_limiter.fl`)
 
-Replaces `circuits/polykit-rate-limiter/circuit.escir.yaml`.
+Replaces `circuits/polykit-rate-limiter/circuit.flir.yaml`.
 
 ```fastlang
 type RateWindow = struct {
@@ -314,7 +314,7 @@ circuit check_rate(user_id: bytes(16), operation: string, tier: string) -> RateC
 
 ### Circuit 4: Sanitize (`polykit_sanitize.fl`)
 
-Replaces `circuits/polykit-sanitize/circuit.escir.yaml` AND `crates/polykit-sanitize/`.
+Replaces `circuits/polykit-sanitize/circuit.flir.yaml` AND `crates/polykit-sanitize/`.
 
 ```fastlang
 type DataType = enum {
@@ -356,7 +356,7 @@ circuit sanitize(input: bytes) -> SanitizationResult
     invariant "no_pii_in_output" { pii_count(sanitized_data) == 0 }
     invariant "audit_complete" { len(audit_entries) >= detections }
     esz_emit "verify/polykit_sanitize.esz"
-    li_feed full_escir true, optimized_ir true
+    li_feed full_flir true, optimized_ir true
 {
     let detections = li_classify(input, "pii_scan")
     let transformed = transform_detected(input, detections)
@@ -372,13 +372,13 @@ circuit detect_only(input: bytes) -> [Detection; 32]
 }
 ```
 
-**Improvements**: `@sanitize` auto-generates exhaustiveness checks (bypassing sanitization produces compile error `ESCIR-S001`). `li_classify` for ML-based PII detection (was hand-coded regex). `witness full` for PoVC-witnessed audit trail. `invariant` proves no PII leaks. Full `esz_emit` + `li_feed` verification pipeline.
+**Improvements**: `@sanitize` auto-generates exhaustiveness checks (bypassing sanitization produces compile error `FLIR-S001`). `li_classify` for ML-based PII detection (was hand-coded regex). `witness full` for PoVC-witnessed audit trail. `invariant` proves no PII leaks. Full `esz_emit` + `li_feed` verification pipeline.
 
 ---
 
 ### Circuit 5: LI Effects Classify (`polykit_li_effects_classify.fl`)
 
-Replaces `circuits/polykit-li_effects-classify/circuit.escir.yaml`.
+Replaces `circuits/polykit-li_effects-classify/circuit.flir.yaml`.
 
 ```fastlang
 type ClassificationSuggestion = struct {
@@ -589,7 +589,7 @@ platform polykit_framework v1 {
 
     streamsight true
     esz_emit "verify/polykit_platform.esz"
-    li_feed full_escir true, optimized_ir true
+    li_feed full_flir true, optimized_ir true
 
     target wasm_client
     target alpha_devnet
@@ -602,8 +602,8 @@ platform polykit_framework v1 {
 
 ```
 circuits/fl/*.fl
-  → estream codegen compile (parse, type-check, lower to ESCIR)
-  → ESCIR optimization passes (O2)
+  → estream codegen compile (parse, type-check, lower to FLIR)
+  → FLIR optimization passes (O2)
   → Rust codegen (replaces most hand-written crate code)
   → cargo build --target wasm32-unknown-unknown
   → wasm-opt -Oz
@@ -660,7 +660,7 @@ polykit/
         polykit_crdt_sync.fl      # Offline-capable CRDT merge
         polykit_blind_relay.fl    # Privacy-preserving message relay
         polykit_classified_fusion.fl  # SCI omniscient fusion
-    legacy/                       # Archived .escir.yaml (reference only)
+    legacy/                       # Archived .flir.yaml (reference only)
       polykit-identity/
       polykit-metering/
       polykit-telemetry/          # Eliminated as separate circuit
@@ -719,10 +719,10 @@ export default function App() {
 
 | Document | Purpose |
 |----------|---------|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Current v0.1.0 architecture (ESCIR YAML) |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Current v0.1.0 architecture (FLIR YAML) |
 | [ESTREAM_FEEDBACK.md](ESTREAM_FEEDBACK.md) | Running feedback on eStream platform |
 | [ESTREAM_GETTING_STARTED.md](ESTREAM_GETTING_STARTED.md) | Getting started guide (to be updated) |
 | [FastLang Spec](https://github.com/polyquantum/estream-io/blob/main/specs/protocol/FASTLANG_SPEC.md) | Canonical FastLang language specification |
 | [FastLang Quickstart](https://github.com/polyquantum/estream-io/blob/main/docs/guides/FASTLANG_QUICKSTART.md) | Zero to compiled circuit in 15 minutes |
-| [ESCIR WASM Client Spec](https://github.com/polyquantum/estream-io/blob/main/specs/architecture/ESCIR_WASM_CLIENT_SPEC.md) | Full WASM client specification |
+| [FLIR WASM Client Spec](https://github.com/polyquantum/estream-io/blob/main/specs/architecture/FLIR_WASM_CLIENT_SPEC.md) | Full WASM client specification |
 | [Native Transition Epic](https://github.com/polyquantum/estream-io/blob/main/.github/epics/EPIC_FASTLANG_NATIVE_TRANSITION.md) | Broader .fl-first migration strategy |

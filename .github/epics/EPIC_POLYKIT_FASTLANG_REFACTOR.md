@@ -10,13 +10,13 @@
 
 ## Overview
 
-Migrate PolyKit from ESCIR YAML circuit definitions (v0.8.1) to FastLang `.fl` source files (v0.8.3). FastLang becomes the single source of truth -- generating Rust, WASM, and TypeScript bindings from `.fl` files. The separate telemetry circuit is eliminated; StreamSight is woven inline via annotations on every circuit.
+Migrate PolyKit from FLIR YAML circuit definitions (v0.8.1) to FastLang `.fl` source files (v0.8.3). FastLang becomes the single source of truth -- generating Rust, WASM, and TypeScript bindings from `.fl` files. The separate telemetry circuit is eliminated; StreamSight is woven inline via annotations on every circuit.
 
 ### Prior State
 
 | Item | Status |
 |------|--------|
-| 6 ESCIR YAML circuit definitions | Current (v0.8.1) |
+| 6 FLIR YAML circuit definitions | Current (v0.8.1) |
 | 5 hand-written Rust crates (~2,500 lines) | Current |
 | 4 FastLang polylabs examples in estream-io | Reference only |
 | polykit-telemetry as separate circuit | Current (to be eliminated) |
@@ -29,7 +29,7 @@ Migrate PolyKit from ESCIR YAML circuit definitions (v0.8.1) to FastLang `.fl` s
 | Separate telemetry circuit | Eliminated (inline via annotations) |
 | Hand-written Rust | ≤600 lines (kernel + shim) |
 | FastLang `.fl` lines | ~800 lines total |
-| ESCIR YAML files | Archived to `circuits/legacy/` |
+| FLIR YAML files | Archived to `circuits/legacy/` |
 | Build pipeline | `estream-dev build-wasm-client --from-fl` |
 | StreamSight coverage | Every circuit has `observe` + `monitor` |
 
@@ -51,22 +51,22 @@ Migrate PolyKit from ESCIR YAML circuit definitions (v0.8.1) to FastLang `.fl` s
 
 ## Phase 2: Circuit Conversion (YAML to FastLang)
 
-Convert 5 ESCIR YAML circuits to FastLang. The 6th (telemetry) is eliminated -- its functionality is distributed as inline annotations across all circuits.
+Convert 5 FLIR YAML circuits to FastLang. The 6th (telemetry) is eliminated -- its functionality is distributed as inline annotations across all circuits.
 
 - [ ] `polykit_identity.fl` -- SPARK auth, HKDF, ML-DSA-87, ML-KEM-1024
-  - Replaces: `circuits/polykit-identity/circuit.escir.yaml` + `crates/polykit-core/src/identity.rs` + `crates/polykit-core/src/crypto.rs`
+  - Replaces: `circuits/polykit-identity/circuit.flir.yaml` + `crates/polykit-core/src/identity.rs` + `crates/polykit-core/src/crypto.rs`
   - Features: `constant_time`, `kat_vector`, `invariant`, `observe metrics`, `monitor`
 - [ ] `polykit_metering.fl` -- 8-dimension resource metering
-  - Replaces: `circuits/polykit-metering/circuit.escir.yaml` + `crates/polykit-core/src/metering.rs`
+  - Replaces: `circuits/polykit-metering/circuit.flir.yaml` + `crates/polykit-core/src/metering.rs`
   - Features: `stream` + `emit`, `parallel for`, `meters`, `observe metrics`
 - [ ] `polykit_rate_limiter.fl` -- Rate limiter with FSM
-  - Replaces: `circuits/polykit-rate-limiter/circuit.escir.yaml`
+  - Replaces: `circuits/polykit-rate-limiter/circuit.flir.yaml`
   - Features: `state_machine`, `streamsight_anomaly()` body calls, `observe metrics`, `monitor`
 - [ ] `polykit_sanitize.fl` -- 3-stage compliance pipeline
-  - Replaces: `circuits/polykit-sanitize/circuit.escir.yaml` + `crates/polykit-sanitize/`
+  - Replaces: `circuits/polykit-sanitize/circuit.flir.yaml` + `crates/polykit-sanitize/`
   - Features: `@sanitize`, `li_classify`, `witness full`, `esz_emit`, `li_feed`, `observe metrics`, `monitor`
 - [ ] `polykit_li_effects.fl` -- LI Effects classification + human-in-loop
-  - Replaces: `circuits/polykit-eslm-classify/circuit.escir.yaml` (ESLM renamed to LI Effects)
+  - Replaces: `circuits/polykit-eslm-classify/circuit.flir.yaml` (ESLM renamed to LI Effects)
   - Features: `feedback` streams, `li_embed`/`li_classify`/`li_infer`, `stream` + `emit`, `observe metrics`
 
 ### Exit Criteria
@@ -115,7 +115,7 @@ Adapted from estream-io polylabs examples with PolyKit profiles and metering:
 
 - [ ] Slim `polykit-core` -- remove identity/crypto/metering code replaced by codegen
 - [ ] Slim `polykit-wasm` -- reduce to thin shim over codegen'd circuit exports
-- [ ] Archive YAML -- move `circuits/*.escir.yaml` to `circuits/legacy/`
+- [ ] Archive YAML -- move `circuits/*.flir.yaml` to `circuits/legacy/`
 - [ ] Update `ARCHITECTURE.md` -- reflect FastLang-native pipeline
 - [ ] Update `ESTREAM_GETTING_STARTED.md` -- new build commands, circuit catalog, migration guide
 - [ ] Update `Cargo.toml` -- bump eStream deps to v0.8.3, remove codegen-replaced crate code
@@ -124,7 +124,7 @@ Adapted from estream-io polylabs examples with PolyKit profiles and metering:
 
 - `estream-dev build-wasm-client --from-fl circuits/fl/ --sign key.pem --enforce-budget` succeeds
 - Hand-written Rust ≤600 lines
-- All docs reference `.fl` files, not `.escir.yaml`
+- All docs reference `.fl` files, not `.flir.yaml`
 - No YAML circuit files outside `circuits/legacy/`
 
 ---
@@ -137,5 +137,5 @@ Adapted from estream-io polylabs examples with PolyKit profiles and metering:
 | FastLang `profile` support | In Progress | Shared annotation profiles |
 | FastLang `composes:` support | In Progress | Circuit composition with versioning |
 | FastLang `stream` + `emit` | Complete | Stream declarations and emit calls |
-| ESCIR WASM Client Spec (#550) | Complete | Pipeline spec |
+| FLIR WASM Client Spec (#550) | Complete | Pipeline spec |
 | Wire Protocol Only (#551) | Complete | No REST policy |

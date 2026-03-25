@@ -96,7 +96,7 @@ circuit video_sfu(frame: MediaFrame, session: SessionId, recipients: bytes(256),
     monitor "frame_latency" { frame_latency_us < 50000 }
     fuzz_target
     @serialize "verify/polylabs_media.esz"
-    ai_feed full_escir true, optimized_ir true
+    ai_feed full_flir true, optimized_ir true
 {
     let kem = mlkem_encaps(pk)
     let nonce = blake3(session)

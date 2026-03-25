@@ -17,7 +17,7 @@ repository = "https://github.com/polylabs-dev/polykit"
 [workspace.dependencies]
 # eStream platform (v0.11.0)
 estream-kernel = { git = "https://github.com/polyquantum/estream", branch = "main", features = ["ml-dsa-87", "ml-kem-1024", "vrf", "metering", "telemetry", "stratum", "cortex", "wire-udp"] }
-estream-escir = { git = "https://github.com/polyquantum/estream", branch = "main", features = ["codegen", "circuits", "graph", "dag"] }
+estream-flir = { git = "https://github.com/polyquantum/estream", branch = "main", features = ["codegen", "circuits", "graph", "dag"] }
 estream-spark = { git = "https://github.com/polyquantum/estream", branch = "main" }
 estream-wire = { git = "https://github.com/polyquantum/estream", branch = "main", features = ["udp", "quic"] }
 eslite = { git = "https://github.com/polyquantum/estream", branch = "main" }

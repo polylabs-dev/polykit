@@ -3,7 +3,7 @@ name = "polykit-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "SPARK identity, PQ crypto, metering, classification — compiled to WASM via ESCIR codegen"
+description = "SPARK identity, PQ crypto, metering, classification — compiled to WASM via FLIR codegen"
 
 [dependencies]
 estream-kernel = { workspace = true }

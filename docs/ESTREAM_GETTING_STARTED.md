@@ -6,7 +6,7 @@
 
 This guide covers how Poly Labs developers use PolyKit to build WASM-first apps on the eStream platform, write FastLang circuits, test locally, and deploy to the alpha-devnet.
 
-PolyKit is the shared framework for all Poly Labs apps — Poly Data, Poly Messenger, Poly Mail, Poly VPN, Poly Pass, Poly OAuth, Poly Mind. It provides identity, PQ crypto, metering, classification, ESLite, console widgets, and sanitization as FastLang circuits compiled to WASM via the ESCIR codegen pipeline.
+PolyKit is the shared framework for all Poly Labs apps — Poly Data, Poly Messenger, Poly Mail, Poly VPN, Poly Pass, Poly OAuth, Poly Mind. It provides identity, PQ crypto, metering, classification, ESLite, console widgets, and sanitization as FastLang circuits compiled to WASM via the FLIR codegen pipeline.
 
 ---
 
@@ -113,7 +113,7 @@ estream-dev build-wasm-client --from-fl circuits/fl/ --sign key.pem --enforce-bu
 
 # Or step-by-step:
 
-# 1. Compile FastLang to ESCIR
+# 1. Compile FastLang to FLIR
 estream codegen compile circuits/fl/polykit_identity.fl
 estream codegen compile circuits/fl/polykit_metering.fl
 # ... (all .fl files)
@@ -131,7 +131,7 @@ estream-dev package-escd
 cd packages/react && npm run build
 ```
 
-The pipeline: `.fl` → ESCIR → Rust codegen → `cargo build --target wasm32-unknown-unknown` → `wasm-opt -Oz` → ABI validation → ML-DSA-87 signing → `.escd` → TypeScript `.d.ts`.
+The pipeline: `.fl` → FLIR → Rust codegen → `cargo build --target wasm32-unknown-unknown` → `wasm-opt -Oz` → ABI validation → ML-DSA-87 signing → `.escd` → TypeScript `.d.ts`.
 
 ---
 
@@ -241,13 +241,13 @@ estream-dev deploy-escd polykit.escd --target alpha-devnet --signing-key $POLYLA
 
 ## Migrating from v0.8.1
 
-PolyKit v0.1.0 referenced eStream v0.8.1 with ESCIR YAML circuits. The v0.2.0 refactor migrates to FastLang-native:
+PolyKit v0.1.0 referenced eStream v0.8.1 with FLIR YAML circuits. The v0.2.0 refactor migrates to FastLang-native:
 
 | What Changed | Action Required |
 |-------------|-----------------|
 | **Single version model** | All eStream crates now 0.8.3. Update `estream-kernel` pins in `polykit/Cargo.toml` |
-| **FastLang is canonical** | Circuit definitions migrated from `.escir.yaml` to `.fl` source in `circuits/fl/` |
-| **YAML circuits archived** | Old `.escir.yaml` files moved to `circuits/legacy/` for reference |
+| **FastLang is canonical** | Circuit definitions migrated from `.flir.yaml` to `.fl` source in `circuits/fl/` |
+| **YAML circuits archived** | Old `.flir.yaml` files moved to `circuits/legacy/` for reference |
 | **Telemetry is inline** | Separate `polykit-telemetry` circuit eliminated. StreamSight via `observe`/`monitor` on every circuit |
 | **Annotation profiles** | Shared `poly_framework_standard`/`poly_framework_sensitive` profiles replace repeated annotations |
 | **New circuits** | `polykit_delta_curate.fl` (delta encoding) and `polykit_governance.fl` (field governance) added |
@@ -273,6 +273,6 @@ No breaking changes to wire protocol, `.escd` format, or WASM ABI contract.
 | [Codegen Targets](https://github.com/polyquantum/estream-io/blob/main/docs/guides/CODEGEN_TARGETS.md) | When to use Rust vs WASM for browser/mobile |
 | [Poly Labs Examples README](https://github.com/polyquantum/estream-io/blob/main/crates/estream-fastlang/examples/polylabs/README.md) | Catalog of platform-level .fl files |
 | [Security Tier Selection](https://github.com/polyquantum/estream-io/blob/main/docs/guides/security-tier-selection.md) | Choosing classification tiers (PUBLIC → SOVEREIGN) |
-| [WASM Client Spec (issue #550)](https://github.com/polyquantum/estream-io/issues/550) | ESCIR WASM client build pipeline specification |
+| [WASM Client Spec (issue #550)](https://github.com/polyquantum/estream-io/issues/550) | FLIR WASM client build pipeline specification |
 | [Wire Protocol Only (issue #551)](https://github.com/polyquantum/estream-io/issues/551) | Why Poly Labs apps use wire protocol, not REST |
 | [Refactor Epic](../.github/epics/EPIC_POLYKIT_FASTLANG_REFACTOR.md) | Tracking epic for this refactor |

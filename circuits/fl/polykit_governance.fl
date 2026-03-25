@@ -69,7 +69,7 @@ circuit governed_emit(record: GovernedRecord, classification: string) -> Governe
     cortex on_anomaly: classification_violation_alert
     invariant "no_pii_at_public" { pii_visible_to_public == false }
     property safety "classification_monotonic" { output_level >= input_level }
-    ai_feed full_escir true, optimized_ir true, optimization_metadata true
+    ai_feed full_flir true, optimized_ir true, optimization_metadata true
     test golden "governed_emit_basic" {
         let record = GovernedRecord { summary: "test", status: "active", timestamp: 1000, details: bytes(1024, 0x00), assignee: bytes(32, 0xAA), priority: 1, pii_data: bytes(512, 0x00), raw_content: bytes(4096, 0x00), internal_notes: bytes(1024, 0x00) }
         let result = governed_emit(record, "internal")

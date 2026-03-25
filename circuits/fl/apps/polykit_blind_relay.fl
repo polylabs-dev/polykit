@@ -119,7 +119,7 @@ circuit platform_health(query: bytes(256), pk: bytes(1568)) -> PlatformMetrics
     property safety "session_isolation" { no_cross_session_data }
     monitor "network_health" { avg_latency_ms < 500 }
     @serialize "verify/polylabs_health.esz"
-    ai_feed full_escir true, optimized_ir true, optimization_metadata true
+    ai_feed full_flir true, optimized_ir true, optimization_metadata true
 {
     let query_hash = sha3_256(query)
     let kem = mlkem_encaps(pk)
