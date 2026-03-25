@@ -36,6 +36,7 @@ platform polykit_framework v1 {
     import polykit_ci from "./polykit_ci.fl"
     import polykit_wallet from "./polykit_wallet.fl"
     import polykit_sensor from "./polykit_sensor.fl"
+    import polykit_portal from "./polykit_portal.fl"
 
     group core [polykit_identity, polykit_metering, polykit_rate_limiter, polykit_blind_telemetry]
     group compliance [polykit_sanitize, polykit_governance, polykit_compliance]
@@ -45,7 +46,7 @@ platform polykit_framework v1 {
     group zero_linkage [polykit_zero_linkage, polykit_blinded_billing, polykit_bridge]
     group graphs [polykit_user_graph, polykit_metering_graph, polykit_subscription_lifecycle]
     group studio [polykit_studio_document, polykit_studio_graph, polykit_collaboration]
-    group composition [polykit_media, polykit_ci, polykit_wallet, polykit_sensor]
+    group composition [polykit_media, polykit_ci, polykit_wallet, polykit_sensor, polykit_portal]
 
     connect polykit_identity -> polykit_metering
     connect polykit_metering -> polykit_rate_limiter
@@ -80,6 +81,10 @@ platform polykit_framework v1 {
     connect polykit_wallet -> polykit_zero_linkage
     connect polykit_sensor -> polykit_identity
     connect polykit_sensor -> polykit_metering
+    connect polykit_portal -> polykit_identity
+    connect polykit_portal -> polykit_metering
+    connect polykit_portal -> polykit_rate_limiter
+    connect polykit_portal -> polykit_zero_linkage
 
     bind polykit_li_effects -> li_engine
 
