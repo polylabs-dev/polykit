@@ -1,0 +1,400 @@
+// PolyKit App Graph — Registration Helpers for Poly Products
+//
+// Generic factory, edge builders, and product graph orchestrator used by every
+// Poly Labs product to register its module set into the Stratum graph.
+// Follows the canonical pattern from eStream's mcp_app_graph.fl.
+/// govern lex polylabs/polykit/app_graph
+
+lex polylabs/polykit/app_graph
+
+@target software
+@codegen_targets ["wasm", "rust"]
+
+import "core/deployment/module_stratum.fl" {
+    ModuleNode, ModuleEdge, SemVer, CompilationReceipt, ResourceBudget8D,
+    CsrStorage, ModuleType, AperturePartition, ModuleState, RolloutState,
+    PersistencePolicy, OfflineCachePolicy, EntitlementTier, EnforcementMode,
+    SLATier, EDGE_REQUIRES, EDGE_BRIDGE_TO,
+    module_graph_add_module, module_graph_add_edge,
+    graph_add_node, graph_add_edge,
+}
+
+import "core/deployment/cross_graph_edges.fl" {
+    EDGE_GOVERNANCE_OBSERVE, EDGE_COMPILED_BY,
+    GovernanceObserveEdge,
+    module_graph_add_governance_observe_edge,
+}
+
+// ── Constants ──────────────────────────────────────────────────────────────────
+
+const POLYKIT_VERSION_MAJOR: u32 = 0
+const POLYKIT_VERSION_MINOR: u32 = 12
+const POLYKIT_VERSION_PATCH: u32 = 0
+
+const EDGE_TYPE_REQUIRES: u8 = 0
+const EDGE_TYPE_BRIDGE_TO: u8 = 30
+const EDGE_TYPE_GOVERNANCE_OBSERVE: u8 = 36
+const EDGE_TYPE_COMPILED_BY: u8 = 37
+
+const EDGE_MEANING_SUPPORTS: u8 = 45
+const EDGE_MEANING_ENRICHES: u8 = 46
+const EDGE_CONCEPT_ORGANIZES: u8 = 47
+const EDGE_EXPERT_JUDGES: u8 = 48
+
+// ── Types ──────────────────────────────────────────────────────────────────────
+
+data ProductGraphConfig : polylabs/polykit/app_graph v1 {
+    product_name: bytes(64),
+    product_lex: bytes(128),
+    version_major: u32,
+    version_minor: u32,
+    version_patch: u32,
+    module_count: u32,
+    entitlement_tier: u8,
+    sla_tier: u8,
+}
+    encode
+    store kv
+
+data BridgeEdgeData : polylabs/polykit/app_graph/bridge v1 {
+    source_lex: string,
+    source_module: string,
+    target_lex: string,
+    target_module: string,
+    bridge_type: string,
+    timestamp_ms: u64,
+}
+    encode
+    store kv
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §1  Module Factory
+// ═══════════════════════════════════════════════════════════════════════════════
+
+circuit make_poly_module(
+    name: string,
+    product_config: ProductGraphConfig,
+    partition: u8,
+    budget: ResourceBudget8D
+) -> ModuleNode
+    lex polylabs/polykit/app_graph
+    @status production
+    @precision D
+    observe metrics: [module_name]
+    meters [compute_cycles]
+{
+    let ver = SemVer {
+        major: product_config.version_major,
+        minor: product_config.version_minor,
+        patch: product_config.version_patch,
+        pre_release: "",
+    }
+    let receipt = CompilationReceipt {
+        source_hash: bytes(32, 0), compiler_version: ver,
+        output_hash: bytes(32, 0), prime_device_id: Option::None,
+        compilation_timestamp: 0, reproducible_verified: false,
+        receipt_signature: bytes(4627, 0),
+    }
+
+    ModuleNode {
+        name: name,
+        version_major: product_config.version_major,
+        version_minor: product_config.version_minor,
+        version_patch: product_config.version_patch,
+        version_pre: "",
+        module_type: ModuleType::SmartCircuit as u8,
+        content_hash: bytes(32, 0), signature_chain: bytes(0),
+        aperture_partition: partition,
+        role_set: ["User", "Admin"],
+        required_entitlement: product_config.entitlement_tier,
+        classification_domains: [], max_classification_level: 0,
+        compilation_receipt: receipt,
+        source_hash: bytes(32, 0),
+        compiler_version_major: product_config.version_major,
+        compiler_version_minor: product_config.version_minor,
+        prime_device_id: bytes(0), reproducible_verified: false,
+        resource_budget: budget,
+        budget_enforcement_mode: EnforcementMode::Hard as u8,
+        state: ModuleState::Active as u8,
+        rollout_state: RolloutState::Canary as u8,
+        canary_target: Option::None,
+        persistence: PersistencePolicy::Persistent as u8,
+        offline_cache_policy: OfflineCachePolicy::CacheAndVerify as u8,
+        max_staleness_seconds: 3600,
+        sla_tier: product_config.sla_tier,
+        preferred_locality: "",
+        created_at_ms: 0, updated_at_ms: 0,
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §2  Graph Mutation Wrappers
+// ═══════════════════════════════════════════════════════════════════════════════
+
+circuit add_poly_module(
+    graph: CsrStorage,
+    module: ModuleNode
+) -> (CsrStorage, bytes(32))
+    lex polylabs/polykit/app_graph
+    @status production
+    @precision D
+    observe metrics: [module_count]
+    meters [compute_cycles, memory_bytes]
+{
+    let (g, node_id) = module_graph_add_module(graph, module)
+    let id_bytes = serialize(node_id) as bytes(32)
+    (g, id_bytes)
+}
+
+circuit add_poly_edge(
+    graph: CsrStorage,
+    edge_type: u8,
+    source_module: string,
+    source_version: string,
+    target_module: string,
+    target_version_constraint: string
+) -> CsrStorage
+    lex polylabs/polykit/app_graph
+    @status production
+    @precision D
+    observe metrics: [edge_type, source_module, target_module]
+    meters [compute_cycles]
+{
+    let src_id = find_poly_module_id(graph, source_module)
+    let dst_id = find_poly_module_id(graph, target_module)
+    module_graph_add_edge(graph, ModuleEdge {
+        edge_type: edge_type,
+        source_module: source_module, source_version: source_version,
+        target_module: target_module,
+        target_version_constraint: target_version_constraint,
+        metadata: bytes(0),
+    }, src_id, dst_id)
+}
+
+circuit add_poly_bridge_edge(
+    graph: CsrStorage,
+    source_module: string,
+    target_product_module: string,
+    target_version: string
+) -> CsrStorage
+    lex polylabs/polykit/app_graph
+    @status production
+    @precision D
+    observe metrics: [bridge_source, bridge_target]
+    meters [compute_cycles]
+{
+    let src_id = find_poly_module_id(graph, source_module)
+    let bridge_data = serialize(BridgeEdgeData {
+        source_lex: "polylabs/polykit/app_graph",
+        source_module: source_module,
+        target_lex: "polylabs/product",
+        target_module: target_product_module,
+        bridge_type: "cross_product",
+        timestamp_ms: 0,
+    }) as bytes
+    let (g, bid) = graph_add_node(graph, 0xB0, bridge_data)
+    graph_add_edge(g, src_id, bid, EDGE_TYPE_BRIDGE_TO, bridge_data)
+}
+
+circuit add_poly_governance_edges(
+    graph: CsrStorage,
+    modules: Vec<string>,
+    governance_lex: string
+) -> CsrStorage
+    lex polylabs/polykit/app_graph
+    @status production
+    @precision D
+    observe metrics: [governance_edge_count]
+    meters [compute_cycles]
+{
+    let g = graph
+    for name in modules {
+        let module_id = find_poly_module_id(g, name)
+        g = module_graph_add_governance_observe_edge(g, GovernanceObserveEdge {
+            observer_lex: governance_lex,
+            observer_module: "governance_core",
+            observed_lex: "polylabs/polykit/app_graph",
+            observed_module: name,
+            observe_scope: "full", read_only: true,
+            witness_chain_required: false, refresh_interval_ms: 60000,
+        }, module_id)
+    }
+    g
+}
+
+circuit add_poly_ce_edges(
+    graph: CsrStorage,
+    module_name: string,
+    meaning_domain: string,
+    noise_filter: string,
+    sme_panel: string
+) -> CsrStorage
+    lex polylabs/polykit/app_graph
+    @status production
+    @precision D
+    observe metrics: [ce_edge_count, meaning_domain]
+    meters [compute_cycles]
+{
+    let module_id = find_poly_module_id(graph, module_name)
+
+    let meaning_data = serialize(meaning_domain) as bytes
+    let (g, m1) = graph_add_node(graph, 0xCE, meaning_data)
+    let g = graph_add_edge(g, module_id, m1, EDGE_MEANING_SUPPORTS, meaning_data)
+
+    let enrich_data = serialize(noise_filter) as bytes
+    let (g, m2) = graph_add_node(g, 0xCE, enrich_data)
+    let g = graph_add_edge(g, module_id, m2, EDGE_MEANING_ENRICHES, enrich_data)
+
+    let concept_data = serialize(meaning_domain) as bytes
+    let (g, m3) = graph_add_node(g, 0xCE, concept_data)
+    let g = graph_add_edge(g, module_id, m3, EDGE_CONCEPT_ORGANIZES, concept_data)
+
+    let expert_data = serialize(sme_panel) as bytes
+    let (g, m4) = graph_add_node(g, 0xCE, expert_data)
+    graph_add_edge(g, module_id, m4, EDGE_EXPERT_JUDGES, expert_data)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §3  Product Graph Orchestrator
+// ═══════════════════════════════════════════════════════════════════════════════
+
+circuit register_product_graph(
+    config: ProductGraphConfig,
+    modules: Vec<(string, u8, ResourceBudget8D)>,
+    edges: Vec<(u8, string, string)>,
+    bridge_edges: Vec<(string, string, string)>
+) -> CsrStorage
+    lex polylabs/polykit/app_graph
+    @status production
+    @precision B
+    @attested true
+    observe metrics: [product_name, module_count, edge_count, bridge_count]
+    meters [compute_cycles, memory_bytes]
+{
+    let g = graph_create()
+    let ver_str = to_string(config.version_major) ++ "."
+        ++ to_string(config.version_minor) ++ "."
+        ++ to_string(config.version_patch)
+    let vc = ">=" ++ ver_str
+
+    for (name, partition, budget) in modules {
+        let node = make_poly_module(name, config, partition, budget)
+        let (g2, _id) = module_graph_add_module(g, node)
+        g = g2
+    }
+
+    for (edge_type, source, target) in edges {
+        let src_id = find_poly_module_id(g, source)
+        let dst_id = find_poly_module_id(g, target)
+        g = module_graph_add_edge(g, ModuleEdge {
+            edge_type: edge_type,
+            source_module: source, source_version: ver_str,
+            target_module: target, target_version_constraint: vc,
+            metadata: bytes(0),
+        }, src_id, dst_id)
+    }
+
+    for (src_mod, tgt_mod, tgt_ver) in bridge_edges {
+        g = add_poly_bridge_edge(g, src_mod, tgt_mod, tgt_ver)
+    }
+
+    g
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Internal Helpers
+// ═══════════════════════════════════════════════════════════════════════════════
+
+circuit find_poly_module_id(graph: CsrStorage, name: string) -> u32
+    lex polylabs/polykit/app_graph
+    @status production
+    @precision D
+{
+    for i in 0..graph.num_nodes {
+        let node_data = graph.node_data[i]
+        let module = deserialize(node_data) as ModuleNode
+        if module.name == name {
+            return i
+        }
+    }
+    0xFFFFFFFF
+}
+
+// ── Golden Tests ───────────────────────────────────────────────────────────────
+
+test golden "make_poly_module_creates_valid_node" {
+    let cfg = ProductGraphConfig {
+        product_name: "polyfiles",
+        product_lex: "polylabs/polyfiles",
+        version_major: 0, version_minor: 1, version_patch: 0,
+        module_count: 4,
+        entitlement_tier: EntitlementTier::Free as u8,
+        sla_tier: SLATier::Standard as u8,
+    }
+    let budget = ResourceBudget8D {
+        execution: 5000, hash_ops: 200, bandwidth: 2000,
+        storage: 1000, observe_events: 100, proofs: 10,
+        consensus: 5, memory: 4096,
+    }
+    let node = make_poly_module("pf_scatter", cfg,
+        AperturePartition::Backend as u8, budget)
+    assert node.name == "pf_scatter"
+    assert node.version_major == 0
+    assert node.version_minor == 1
+    assert node.resource_budget.execution == 5000
+    assert node.state == ModuleState::Active as u8
+}
+
+test golden "add_poly_edge_wires_dependency" {
+    let cfg = ProductGraphConfig {
+        product_name: "polyfiles",
+        product_lex: "polylabs/polyfiles",
+        version_major: 0, version_minor: 1, version_patch: 0,
+        module_count: 2,
+        entitlement_tier: EntitlementTier::Free as u8,
+        sla_tier: SLATier::Standard as u8,
+    }
+    let budget = ResourceBudget8D {
+        execution: 2000, hash_ops: 100, bandwidth: 1000,
+        storage: 500, observe_events: 50, proofs: 5,
+        consensus: 2, memory: 2048,
+    }
+    let g = graph_create()
+    let m1 = make_poly_module("pf_core", cfg,
+        AperturePartition::Shared as u8, budget)
+    let m2 = make_poly_module("pf_scatter", cfg,
+        AperturePartition::Backend as u8, budget)
+    let (g, _id1) = module_graph_add_module(g, m1)
+    let (g, _id2) = module_graph_add_module(g, m2)
+    let g = add_poly_edge(g, EDGE_TYPE_REQUIRES,
+        "pf_scatter", "0.1.0", "pf_core", ">=0.1.0")
+    assert g.num_nodes == 2
+    assert g.num_edges == 1
+}
+
+// ── Metrics Store ──────────────────────────────────────────────────────────────
+
+store series polykit_app_graph_metrics
+    lex polylabs/polykit/app_graph/metrics
+{
+    operation: string key
+    product_name: string
+    module_count: u32
+    edge_count: u32
+    bridge_count: u32
+    governance_edge_count: u32
+    ce_edge_count: u32
+    register_latency_ns: u64
+}
+
+// ── Extern ─────────────────────────────────────────────────────────────────────
+
+extern "rust" {
+    #[module = "estream_runtime"]
+    #[api = "graph"]
+    #[state = "os"]
+    fn graph_create() -> CsrStorage
+    fn serialize(data: any) -> bytes
+    fn deserialize(data: bytes) -> any
+    fn to_string(val: u64) -> string
+}

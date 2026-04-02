@@ -10,7 +10,7 @@ target = ["wasm_client", "alpha_devnet"]
 
 [circuits]
 path = "circuits/fl"
-count = 22
+count = 26
 
 [circuits.groups]
 core = ["polykit_identity", "polykit_metering", "polykit_rate_limiter", "polykit_blind_telemetry"]
@@ -20,6 +20,7 @@ regional = ["polykit_regional_us", "polykit_regional_eu"]
 apps = ["polykit_media_stream", "polykit_crdt_sync", "polykit_blind_relay", "polykit_classified_fusion"]
 zero_linkage = ["polykit_zero_linkage", "polykit_blinded_billing", "polykit_bridge"]
 graphs = ["polykit_user_graph", "polykit_metering_graph", "polykit_subscription_lifecycle"]
+cognitive = ["polykit_cognitive", "polykit_noise_filter", "polykit_sme", "polykit_app_graph"]
 
 [telemetry]
 context = "poly-polykit-telemetry-v1"

@@ -1,0 +1,441 @@
+# PolyKit Cognitive Engine + App Graph Integration Specification
+
+| Field | Value |
+|-------|-------|
+| **Version** | v0.1.0 |
+| **Status** | Draft |
+| **Package** | `polykit` v0.11.0+ |
+| **Lex Namespace** | `esn/global/org/polylabs/polykit/ce` |
+| **Upstream Dependency** | eStream v0.22.0+ (CE Phase 1+) |
+| **New Circuits** | 4 (`polykit_cognitive.fl`, `polykit_noise_filter.fl`, `polykit_sme.fl`, `polykit_app_graph.fl`) |
+| **Total Circuits** | 26 (22 existing + 4 new) |
+
+---
+
+## 1. Overview
+
+### Purpose
+
+This specification defines how Poly Labs products integrate with the eStream Cognitive Engine (CE) through PolyKit adapter circuits. Rather than each product reimplementing CE integration from scratch, PolyKit provides four composable circuits that handle the adapter pattern, noise filtering, SME panel management, and app graph registration — giving every Poly Labs product a consistent, zero-linkage-compliant CE integration path.
+
+### Design Principles
+
+| Principle | Implementation |
+|-----------|----------------|
+| **100% FastLang** | All 4 circuits are `.fl` source, compiled via FLIR codegen (FL → Rust/WASM) |
+| **Zero-Linkage Compliant** | Each product's CE state is HKDF-isolated; no cross-product CE leakage |
+| **Composable** | Products compose these 4 circuits with their domain circuits via `EDGE_BRIDGE_TO` |
+| **Lex-Isolated** | CE observations stay within per-product lex namespaces |
+| **Blind Telemetry** | All CE metrics flow through `polykit_blind_telemetry` — no identifiable data leaks |
+
+### Scope
+
+These 4 circuits sit between eStream's raw CE primitives (SSM hidden state, observation ingestion, cortex advisors) and product-level domain logic. They do NOT replace eStream CE — they adapt it for the Poly Labs product family with consistent conventions.
+
+---
+
+## 2. CE Adapter Pattern
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Product Layer (e.g. PolyGit, PolyFiles, PolyMessenger)     │
+│  ┌─────────────┐  ┌──────────────┐  ┌───────────────────┐  │
+│  │ domain.fl   │  │ product      │  │ product-specific  │  │
+│  │ circuits    │  │ app_graph.fl │  │ CE observers      │  │
+│  └──────┬──────┘  └──────┬───────┘  └────────┬──────────┘  │
+├─────────┼────────────────┼────────────────────┼─────────────┤
+│  PolyKit CE Layer                                           │
+│  ┌──────┴──────┐  ┌──────┴───────┐  ┌────────┴──────────┐  │
+│  │ polykit_    │  │ polykit_     │  │ polykit_          │  │
+│  │ cognitive.fl│  │ app_graph.fl │  │ noise_filter.fl   │  │
+│  └──────┬──────┘  └──────┬───────┘  └────────┬──────────┘  │
+│         │         ┌──────┴───────┐            │             │
+│         │         │ polykit_     │            │             │
+│         │         │ sme.fl       │            │             │
+│         │         └──────┬───────┘            │             │
+├─────────┼────────────────┼────────────────────┼─────────────┤
+│  eStream CE Primitives                                      │
+│  ┌──────┴──────┐  ┌──────┴───────┐  ┌────────┴──────────┐  │
+│  │ SSM hidden  │  │ cortex       │  │ observation       │  │
+│  │ state       │  │ advisors     │  │ ingestion         │  │
+│  └─────────────┘  └──────────────┘  └───────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### `polykit_cognitive.fl` — CE Adapter Circuit
+
+The primary adapter between eStream CE and Poly Labs products. Responsibilities:
+
+| Responsibility | Description |
+|---------------|-------------|
+| **HKDF Context Derivation** | Derives per-product CE keys from SPARK identity using product-specific HKDF context strings (e.g. `poly-git-ce-v1`, `poly-files-ce-v1`) |
+| **Observation Routing** | Routes domain observations from product circuits to the CE observation ingestion pipeline |
+| **SSM State Binding** | Binds the product's SSM hidden state to its lex namespace, ensuring zero-linkage isolation |
+| **Cortex Advisor Composition** | Composes product-specific cortex advisors with PolyKit's shared advisors (anomaly detection, pattern recognition) |
+| **License Gate** | Validates that the product's Strategic License Grant includes CE access before activating |
+
+**Key Interfaces:**
+
+```fl
+// Inputs from product layer
+INPUT product_id: ProductIdentifier
+INPUT hkdf_context: String
+INPUT observations: Stream<Observation>
+
+// Outputs to product layer
+OUTPUT ce_state: CEStateHandle
+OUTPUT advisors: Vec<CortexAdvisor>
+OUTPUT anomalies: Stream<AnomalyAlert>
+```
+
+---
+
+## 3. App Graph Registration Convention
+
+### `polykit_app_graph.fl` — App Graph Registry Circuit
+
+Every Poly Labs product registers its circuit topology as an App Graph — a declarative manifest of the product's circuit composition, dependencies, and CE integration points. The app graph serves as:
+
+1. **Runtime Discovery** — Products discover each other's capabilities without violating zero-linkage (via blinded capability probes)
+2. **CE Context** — The CE uses app graph topology to understand which observations are structurally related
+3. **Compliance Mapping** — Maps circuits to compliance frameworks for automated audit trail generation
+4. **Upgrade Coordination** — When PolyKit circuits upgrade, the app graph identifies which products are affected
+
+### Registration Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `product_id` | `ProductIdentifier` | Unique product identifier (e.g. `poly-git`, `poly-files`) |
+| `version` | `SemVer` | Product version |
+| `circuits` | `Vec<CircuitRef>` | List of circuits composed by this product |
+| `ce_observers` | `Vec<ObserverRef>` | CE observation points registered by this product |
+| `noise_profile` | `NoiseProfileRef` | Reference to the product's noise filter configuration |
+| `sme_panels` | `Vec<SMEPanelRef>` | SME panels this product contributes or consumes |
+| `license_grant` | `LicenseGrantRef` | Strategic License Grant governing this product's eStream usage |
+| `lex_namespace` | `LexPath` | Product's lex namespace root |
+
+### Convention
+
+Products register their app graph at initialization by calling `polykit_app_graph::register()` with their manifest. The registry is stored in the product's own lex namespace — no central registry exists (zero-linkage compliance).
+
+---
+
+## 4. Noise Filter Configuration
+
+### `polykit_noise_filter.fl` — Observation Noise Filter Circuit
+
+Raw observations from product circuits contain noise — redundant state transitions, high-frequency telemetry, debug-level events. The noise filter sits between product observers and CE ingestion, applying configurable filtering to ensure the CE's SSM receives high-signal observations.
+
+### Filter Stages
+
+| Stage | Description | Configurable |
+|-------|-------------|--------------|
+| **Deduplication** | Collapses identical observations within a time window | Window size (ms) |
+| **Rate Limiting** | Caps observation throughput per circuit per time window | Max obs/sec per circuit |
+| **Relevance Scoring** | Scores observations against the product's CE context model | Score threshold (0.0–1.0) |
+| **Sensitivity Classification** | Classifies observations by data sensitivity tier (public, internal, confidential, restricted) | Tier filter mask |
+| **Aggregation** | Aggregates high-frequency numeric observations into statistical summaries | Aggregation window (ms), method (mean/p50/p99) |
+
+### Default Profiles
+
+| Profile | Use Case | Dedup Window | Rate Limit | Relevance Threshold |
+|---------|----------|-------------|------------|-------------------|
+| `development` | Local dev, full observability | 0ms (disabled) | 1000/s | 0.0 (all pass) |
+| `staging` | Pre-production testing | 100ms | 200/s | 0.3 |
+| `production` | Live deployment, signal-optimized | 500ms | 50/s | 0.6 |
+| `audit` | Compliance audit mode, maximum retention | 0ms (disabled) | 500/s | 0.0 (all pass) |
+
+### Product Override
+
+Products can override the default profile by providing a `NoiseFilterConfig` to `polykit_noise_filter::configure()`. Overrides are validated against the product's license grant — some tiers may restrict minimum relevance thresholds.
+
+---
+
+## 5. SME Panel Framework
+
+### `polykit_sme.fl` — Subject Matter Expert Panel Circuit
+
+The SME Panel Framework enables products to declare domain-specific expert panels that the CE consults when generating advisories. Each panel represents a domain of expertise (e.g. "git branching strategy", "encryption key rotation", "compliance policy").
+
+### Panel Structure
+
+| Component | Description |
+|-----------|-------------|
+| **Panel ID** | Unique identifier within the product's lex namespace |
+| **Domain** | Structured domain descriptor (e.g. `security/key-rotation`, `compliance/gdpr`) |
+| **Knowledge Base** | References to delta-curate DAG nodes containing domain knowledge |
+| **Inference Rules** | FL-native inference rules the CE can invoke for domain-specific reasoning |
+| **Confidence Model** | Calibration model for panel confidence scores |
+| **Attestation** | ML-DSA-87 signed attestation of panel provenance and update history |
+
+### Panel Lifecycle
+
+```
+┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+│ Register │───▶│  Train   │───▶│  Active  │───▶│ Retired  │
+│          │    │          │    │          │    │          │
+│ Panel    │    │ Accrete  │    │ Consult  │    │ Archive  │
+│ declared │    │ knowledge│    │ by CE    │    │ in DAG   │
+└──────────┘    └──────────┘    └──────────┘    └──────────┘
+```
+
+### Cross-Product Panel Isolation
+
+Per zero-linkage constraints, panels are strictly isolated per product. A PolyGit SME panel about branching strategy is invisible to PolyFiles. Products that opt-in to the client-side bridge can create a personal cross-product panel view, but this is purely local (WASM + ESLite, no server knowledge).
+
+---
+
+## 6. Product Integration Guide
+
+### How a Product Composes the 4 CE Circuits
+
+Using **PolyGit** as the reference example:
+
+#### Step 1: App Graph Registration
+
+```fl
+// polygit_app_graph.fl
+IMPORT polykit_app_graph FROM "polykit/ce"
+
+GRAPH polygit_app_graph {
+    NODE product_manifest {
+        product_id: "poly-git"
+        version: "0.5.0"
+        lex_namespace: "esn/global/org/polylabs/polygit"
+        license_grant: "polylabs-estream-slg-v1"
+    }
+
+    NODE ce_config {
+        hkdf_context: "poly-git-ce-v1"
+        noise_profile: "production"
+        sme_panels: ["git-branching", "code-review", "ci-policy"]
+    }
+
+    EDGE product_manifest -> ce_config TYPE "CE_BINDING"
+    EDGE_BRIDGE_TO polykit_app_graph::registry
+}
+```
+
+#### Step 2: CE Adapter Initialization
+
+```fl
+// polygit_ce_init.fl
+IMPORT polykit_cognitive FROM "polykit/ce"
+IMPORT polykit_noise_filter FROM "polykit/ce"
+
+CIRCUIT polygit_ce_init {
+    ce_handle = polykit_cognitive::init(
+        product_id: "poly-git",
+        hkdf_context: "poly-git-ce-v1",
+        license_grant: current_license()
+    )
+
+    polykit_noise_filter::configure(
+        profile: "production",
+        overrides: {
+            relevance_threshold: 0.7,
+            rate_limit: 30
+        }
+    )
+
+    RETURN ce_handle
+}
+```
+
+#### Step 3: SME Panel Declaration
+
+```fl
+// polygit_sme_panels.fl
+IMPORT polykit_sme FROM "polykit/ce"
+
+CIRCUIT polygit_register_panels {
+    polykit_sme::register_panel(
+        id: "git-branching",
+        domain: "vcs/branching-strategy",
+        knowledge_base: delta_curate_ref("polygit/kb/branching"),
+        inference_rules: [rule_merge_safety, rule_branch_naming]
+    )
+
+    polykit_sme::register_panel(
+        id: "code-review",
+        domain: "vcs/code-review",
+        knowledge_base: delta_curate_ref("polygit/kb/review"),
+        inference_rules: [rule_review_completeness, rule_approval_quorum]
+    )
+
+    polykit_sme::register_panel(
+        id: "ci-policy",
+        domain: "ci/pipeline-policy",
+        knowledge_base: delta_curate_ref("polygit/kb/ci"),
+        inference_rules: [rule_pipeline_attestation, rule_build_reproducibility]
+    )
+}
+```
+
+#### Step 4: Observation Emission
+
+```fl
+// Inside any PolyGit domain circuit
+IMPORT polykit_cognitive FROM "polykit/ce"
+
+CIRCUIT polygit_push_handler {
+    // ... push validation logic ...
+
+    polykit_cognitive::observe(
+        category: "vcs/push",
+        data: { repo: repo_id, branch: branch_name, commit_count: n },
+        sensitivity: "internal"
+    )
+}
+```
+
+### Integration Checklist
+
+| Step | Circuit Used | Required |
+|------|-------------|----------|
+| Register app graph | `polykit_app_graph.fl` | Yes |
+| Initialize CE adapter | `polykit_cognitive.fl` | Yes |
+| Configure noise filter | `polykit_noise_filter.fl` | Yes (defaults apply if not called) |
+| Register SME panels | `polykit_sme.fl` | Optional (but recommended) |
+| Emit observations | `polykit_cognitive.fl` | Yes (via `observe()`) |
+| Handle advisories | `polykit_cognitive.fl` | Yes (via `on_advisory()`) |
+
+---
+
+## 7. Circuit Inventory
+
+### New CE Circuits (4)
+
+| Circuit | File | Group | Description |
+|---------|------|-------|-------------|
+| `polykit_cognitive` | `circuits/fl/ce/polykit_cognitive.fl` | `ce` | CE adapter — HKDF derivation, observation routing, SSM state binding, cortex composition |
+| `polykit_noise_filter` | `circuits/fl/ce/polykit_noise_filter.fl` | `ce` | Observation noise filter — dedup, rate limiting, relevance scoring, aggregation |
+| `polykit_sme` | `circuits/fl/ce/polykit_sme.fl` | `ce` | SME panel framework — panel registration, lifecycle, knowledge base binding |
+| `polykit_app_graph` | `circuits/fl/ce/polykit_app_graph.fl` | `ce` | App graph registry — product circuit topology, CE integration points, compliance mapping |
+
+### Existing Circuits (22)
+
+| Group | Circuits | Count |
+|-------|----------|-------|
+| **core** | `polykit_identity`, `polykit_metering`, `polykit_rate_limiter`, `polykit_blind_telemetry` | 4 |
+| **compliance** | `polykit_sanitize`, `polykit_governance` | 2 |
+| **intelligence** | `polykit_li_effects`, `polykit_delta_curate` | 2 |
+| **regional** | `polykit_regional_us`, `polykit_regional_eu` | 2 |
+| **apps** | `polykit_media_stream`, `polykit_crdt_sync`, `polykit_blind_relay`, `polykit_classified_fusion` | 4 |
+| **zero_linkage** | `polykit_zero_linkage`, `polykit_blinded_billing`, `polykit_bridge` | 3 |
+| **graphs** | `polykit_user_graph`, `polykit_metering_graph`, `polykit_subscription_lifecycle` | 3 |
+| **composition** | *(8 v0.22.0 cross-product circuits, listed in CLAUDE.md)* | 2* |
+| | | **22** |
+
+*\*Composition circuits are counted within the groups above.*
+
+### Total: 26 Circuits
+
+| Category | Count |
+|----------|-------|
+| Existing (pre-CE) | 22 |
+| New CE circuits | 4 |
+| **Total** | **26** |
+
+---
+
+## 8. Strategic License Grants Integration
+
+### License Gate Architecture
+
+Every CE operation is gated by the product's Strategic License Grant (SLG). The `polykit_cognitive.fl` adapter validates the SLG at initialization and enforces tier-specific constraints at runtime.
+
+### SLG Tiers and CE Access
+
+| SLG Tier | CE Access | SME Panels | Noise Filter | Observation Rate | App Graph |
+|----------|-----------|------------|--------------|-----------------|-----------|
+| **Community** | Read-only advisories | 0 (consume shared only) | `production` profile only | 10/s | Register only |
+| **Professional** | Full CE with local SSM | Up to 5 custom panels | All profiles | 50/s | Full read/write |
+| **Enterprise** | Full CE with distributed SSM | Unlimited panels | All profiles + custom | 200/s | Full + cross-product (bridge) |
+| **Sovereign** | Full CE with on-premise SSM | Unlimited + exportable | All + custom + audit | Unlimited | Full + air-gapped |
+
+### Enforcement Points
+
+| Enforcement Point | Circuit | Check |
+|-------------------|---------|-------|
+| CE initialization | `polykit_cognitive.fl` | Validates SLG tier allows CE access |
+| Panel registration | `polykit_sme.fl` | Validates panel count against SLG tier limit |
+| Observation emission | `polykit_noise_filter.fl` | Enforces rate limit from SLG tier |
+| App graph write | `polykit_app_graph.fl` | Validates write permission from SLG tier |
+
+### SLG Validation Flow
+
+```
+Product init
+    │
+    ▼
+polykit_cognitive::init(license_grant: "polylabs-estream-slg-v1")
+    │
+    ├── Fetch SLG from lex namespace
+    ├── Validate ML-DSA-87 signature
+    ├── Extract tier and permissions
+    ├── Derive CE HKDF context (product-specific)
+    ├── Bind SSM state to lex namespace
+    │
+    ▼
+CE ready (tier-constrained)
+```
+
+---
+
+## 9. Zero-Linkage Compliance
+
+### Per-Product Isolation Guarantees
+
+| Isolation Boundary | Mechanism |
+|--------------------|-----------|
+| CE SSM hidden state | Independent HKDF derivation per product (`poly-git-ce-v1`, `poly-files-ce-v1`, etc.) |
+| Observations | Routed only to product's own SSM; never cross-product |
+| SME panels | Registered in product's lex namespace; invisible to other products |
+| App graph | Stored in product's lex namespace; blinded capability probes for discovery |
+| Noise filter config | Per-product configuration; no shared filter state |
+| Cortex advisories | Generated from product's own SSM; no cross-product advisory leakage |
+
+### Bridge Exception
+
+Products whose users opt-in to the client-side cross-product bridge (`polykit_bridge.fl`) can create a unified CE view. This bridge:
+
+- Runs entirely in WASM on the client
+- Uses `HKDF("poly-bridge-v1")` — a separate derivation context
+- Aggregates advisories only (no raw observations cross product boundaries)
+- Is revocable by deleting the bridge key
+- Has zero server-side or lattice-node knowledge
+
+---
+
+## 10. Dependencies
+
+| Dependency | Version | Usage |
+|------------|---------|-------|
+| eStream CE | v0.22.0+ Phase 1+ | SSM hidden state, observation ingestion, cortex advisors |
+| `polykit_identity` | existing | SPARK identity for HKDF derivation |
+| `polykit_blind_telemetry` | existing | Blind telemetry for CE metrics |
+| `polykit_governance` | existing | License grant validation |
+| `polykit_zero_linkage` | existing | Cross-product isolation enforcement |
+| `polykit_delta_curate` | existing | Knowledge base storage for SME panels |
+
+---
+
+## Appendix A: Product HKDF Contexts
+
+| Product | HKDF Context String |
+|---------|-------------------|
+| Poly Git | `poly-git-ce-v1` |
+| Poly Files | `poly-files-ce-v1` |
+| Poly Messenger | `poly-messenger-ce-v1` |
+| Poly Mail | `poly-mail-ce-v1` |
+| Poly Docs | `poly-docs-ce-v1` |
+| Poly Pass | `poly-pass-ce-v1` |
+| Poly VPN | `poly-vpn-ce-v1` |
+| Poly OAuth | `poly-oauth-ce-v1` |
+| Poly Mind | `poly-mind-ce-v1` |
+| Poly Wallet | `poly-wallet-ce-v1` |
+| Poly Photos | `poly-photos-ce-v1` |
+| Poly Monitor | `poly-monitor-ce-v1` |

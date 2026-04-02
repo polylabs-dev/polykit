@@ -5,7 +5,7 @@ type = "sdk"
 description = "Shared SDK for all Poly Labs products"
 
 [component.circuits]
-total = 22
+total = 26
 path = "circuits/fl"
 
 [component.dependencies]
@@ -20,3 +20,10 @@ context = "poly-polykit-telemetry-v1"
 user_identity = "circuits/fl/graphs/polykit_user_graph.fl"
 metering_aggregation = "circuits/fl/graphs/polykit_metering_graph.fl"
 subscription_history = "circuits/fl/graphs/polykit_subscription_lifecycle.fl"
+app_module_graph = "circuits/fl/polykit_app_graph.fl"
+
+[component.cognitive]
+adapter = "circuits/fl/polykit_cognitive.fl"
+noise_filter = "circuits/fl/polykit_noise_filter.fl"
+sme_panels = "circuits/fl/polykit_sme.fl"
+app_graph = "circuits/fl/polykit_app_graph.fl"

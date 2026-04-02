@@ -1,0 +1,547 @@
+/// PolyKit Cognitive Engine — Product-level CE integration for Poly Labs
+///
+/// Composes eStream's Cognitive Engine constructs (meaning, concept,
+/// crystallization) with PolyKit identity, metering, and governance.
+/// Provides meaning domain registration, observation ingestion,
+/// crystallization triggering, and per-product CE configuration for
+/// all Poly Labs products.
+///
+/// Products: All — every product feeds observations into its own
+///   meaning domain(s) and benefits from crystallized insights.
+///
+/// Lex Architecture:
+///   polylabs/polykit/cognitive
+///   Per-domain sub-lex for observations, crystallizations, and
+///   confidence distributions. Only aggregate counts and health
+///   metrics fan up.
+///
+/// govern lex polylabs/polykit/cognitive
+
+import polykit_identity from "./polykit_identity.fl"
+import polykit_metering from "./polykit_metering.fl"
+import polykit_governance from "./polykit_governance.fl"
+
+// ── Types ────────────────────────────────────────────────────────────
+
+type DomainId = bytes(32)
+type MeaningId = bytes(32)
+type ObservationHash = bytes(32)
+type WitnessHash = bytes(32)
+type NoiseFilterId = bytes(32)
+type SmePanelId = bytes(32)
+
+// ── Data Declarations with Stratum + Cortex ─────────────────────────
+
+data ProductMeaningDomain : polykit v1 {
+    domain_id: DomainId,
+    product_lex: bytes(128),
+    domain_name: bytes(64),
+    domain_description: bytes(256),
+    crystallization_threshold: u8,
+    impact_weight: u8,
+    created_at: u64,
+}
+    store kv
+    govern lex polylabs/polykit/cognitive
+    cortex {
+        infer on_write
+        on_anomaly alert "cognitive-team"
+    }
+
+data MeaningIngestion : polykit v1 {
+    domain_id: DomainId,
+    observation_hash: ObservationHash,
+    source_module: bytes(64),
+    confidence_score: u8,
+    ingested_at: u64,
+}
+    store kv
+    govern lex polylabs/polykit/cognitive
+    cortex {
+        infer on_write
+    }
+
+data CrystallizationEvent : polykit v1 {
+    domain_id: DomainId,
+    meaning_id: MeaningId,
+    evidence_count: u16,
+    confidence: u8,
+    crystallized_at: u64,
+    witness_hash: WitnessHash,
+}
+    store kv
+    govern lex polylabs/polykit/cognitive
+    cortex {
+        infer on_write
+        on_anomaly alert "cognitive-team"
+    }
+
+data ProductCEConfig : polykit v1 {
+    product_lex: bytes(128),
+    domains: list<DomainId>,
+    noise_filter_id: NoiseFilterId,
+    sme_panel_id: SmePanelId,
+    ssm_grounding_enabled: bool,
+    crystallization_auto: bool,
+}
+    store kv
+    govern lex polylabs/polykit/cognitive
+    cortex {
+        infer on_write
+    }
+
+data DomainHealthSnapshot : polykit v1 {
+    domain_id: DomainId,
+    meaning_count: u64,
+    avg_confidence: u8,
+    last_crystallization: u64,
+    staleness_seconds: u64,
+}
+
+// ── Cortex Intelligence Block ───────────────────────────────────────
+
+cortex polykit_cognitive_intelligence {
+    expose [domains_registered, meanings_ingested, crystallizations, confidence_distribution]
+    infer on_write {
+        model cognitive_advisor;
+        confidence_threshold 0.80
+    }
+    on_anomaly alert {
+        severity warning;
+        channel cognitive
+    }
+}
+
+// ── Streams ─────────────────────────────────────────────────────────
+
+stream product_meaning_domains : state<DomainId, ProductMeaningDomain> {
+    retention forever
+    consumers [streamsight, metering, governance, cortex]
+}
+
+stream meaning_ingestions : event<MeaningIngestion> {
+    retention 365d
+    consumers [streamsight, metering, cortex]
+}
+
+stream crystallization_events : event<CrystallizationEvent> {
+    retention 365d
+    consumers [streamsight, metering, governance, cortex, audit_trail]
+}
+
+// ── Series ──────────────────────────────────────────────────────────
+
+series cognitive_series {
+    over ProductMeaningDomain,
+    fields: [domains_registered, meanings_ingested, crystallizations_triggered, avg_confidence]
+}
+
+// ── Extern Declarations ─────────────────────────────────────────────
+
+extern {
+    fn store_get(table: string, key: bytes) -> bytes
+    fn store_put(table: string, key: bytes, value: bytes) -> bool
+    fn store_scan(table: string, prefix: bytes, limit: u32) -> list<bytes>
+    fn emit(stream: string, event: bytes) -> bool
+    fn mldsa_sign(secret_key: bytes(4896), payload: bytes) -> bytes(4627)
+}
+
+// ── Core Circuits ───────────────────────────────────────────────────
+
+/// Register a new meaning domain for a product's CE pipeline.
+@guard(block_on: domain_registration_failed)
+circuit register_meaning_domain(
+    product_lex: bytes(128),
+    domain_name: bytes(64),
+    domain_description: bytes(256),
+    crystallization_threshold: u8,
+    impact_weight: u8,
+) -> ProductMeaningDomain
+    profile poly_framework_standard
+    lex polylabs/polykit/cognitive
+    precision B
+    rbac [developer, admin]
+    attested true
+    observe metrics: [domains_registered, domain_distribution]
+    monitor "domain_registration_rate" { domains_registered < 50 per 3600s }
+    invariant "product_lex_nonempty" { len(product_lex) > 0 }
+    invariant "domain_name_nonempty" { len(domain_name) > 0 }
+    invariant "threshold_valid" { crystallization_threshold > 0 and crystallization_threshold <= 100 }
+    invariant "weight_valid" { impact_weight > 0 and impact_weight <= 100 }
+    property liveness "domain_created" { eventually(domain_id != null) }
+    meters [compute_cycles, memory_bytes, storage]
+    wasm_abi [store_get, store_put, emit, now]
+    test golden "register_messenger_domain" {
+        let plex = bytes(128, 0x01)
+        let dname = bytes(64, 0x02)
+        let ddesc = bytes(256, 0x03)
+        let result = register_meaning_domain(plex, dname, ddesc, 70, 50)
+        assert len(result.domain_id) == 32
+        assert result.crystallization_threshold == 70
+        assert result.impact_weight == 50
+    }
+{
+    let ts = now()
+    let domain_id = sha3_256(concat(product_lex, domain_name, encode(ts)))
+
+    let existing = store_get("cognitive_domains", domain_id)
+    if existing != null { guard_fail(domain_registration_failed) }
+
+    let domain = ProductMeaningDomain {
+        domain_id: domain_id,
+        product_lex: product_lex,
+        domain_name: domain_name,
+        domain_description: domain_description,
+        crystallization_threshold: crystallization_threshold,
+        impact_weight: impact_weight,
+        created_at: ts,
+    }
+
+    store_put("cognitive_domains", domain_id, encode(domain))
+    emit(product_meaning_domains, { domain_registered: { domain_id: domain_id, product_lex: product_lex } })
+
+    let dims = polykit_metering::DimensionValues { executions: 1, hashes: 1, bandwidth: 0, storage: 512, observables: 1, proofs: 0, circuits: 1, mpc_sessions: 0 }
+    polykit_metering::record_usage(bit_slice(product_lex, 0, 128), "register_meaning_domain", dims)
+
+    domain
+}
+
+/// Ingest an observation into a meaning domain's CE pipeline.
+@guard(block_on: ingestion_failed)
+circuit ingest_observation(
+    domain_id: DomainId,
+    observation_hash: ObservationHash,
+    source_module: bytes(64),
+    confidence_score: u8,
+) -> MeaningIngestion
+    profile poly_framework_standard
+    lex polylabs/polykit/cognitive
+    precision A
+    observe metrics: [meanings_ingested, confidence_distribution, source_module_distribution]
+    monitor "ingestion_rate" { meanings_ingested < 100000 per 3600s }
+    invariant "domain_exists" { store_get("cognitive_domains", domain_id) != null }
+    invariant "observation_nonempty" { len(observation_hash) == 32 }
+    invariant "confidence_bounded" { confidence_score <= 100 }
+    invariant "source_specified" { len(source_module) > 0 }
+    property liveness "observation_recorded" { eventually(ingestion_id != null) }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [store_get, store_put, emit, now]
+    test golden "ingest_chat_observation" {
+        let did = bytes(32, 0xAA)
+        let ohash = bytes(32, 0xBB)
+        let src = bytes(64, 0xCC)
+        let result = ingest_observation(did, ohash, src, 85)
+        assert result.domain_id == did
+        assert result.confidence_score == 85
+    }
+{
+    let ts = now()
+
+    let domain = decode<ProductMeaningDomain>(store_get("cognitive_domains", domain_id))
+    if domain == null { guard_fail(ingestion_failed) }
+
+    let ingestion = MeaningIngestion {
+        domain_id: domain_id,
+        observation_hash: observation_hash,
+        source_module: source_module,
+        confidence_score: confidence_score,
+        ingested_at: ts,
+    }
+
+    let ingestion_key = sha3_256(concat(domain_id, observation_hash, encode(ts)))
+    store_put("cognitive_ingestions", ingestion_key, encode(ingestion))
+    emit(meaning_ingestions, { observation_ingested: { domain_id: domain_id, observation_hash: observation_hash, confidence: confidence_score } })
+
+    let count_key = concat("ingestion_count:", domain_id)
+    let prev_count = decode<u64>(store_get("cognitive_counters", count_key))
+    let new_count = if prev_count != null { prev_count + 1 } else { 1 }
+    store_put("cognitive_counters", count_key, encode(new_count))
+
+    let conf_key = concat("confidence_sum:", domain_id)
+    let prev_conf = decode<u64>(store_get("cognitive_counters", conf_key))
+    let new_conf = if prev_conf != null { prev_conf + (confidence_score as u64) } else { confidence_score as u64 }
+    store_put("cognitive_counters", conf_key, encode(new_conf))
+
+    let config = decode<ProductCEConfig>(store_get("cognitive_configs", domain.product_lex))
+    if config != null and config.crystallization_auto {
+        let threshold = domain.crystallization_threshold
+        if new_count >= (threshold as u64) {
+            let avg = (new_conf / new_count) as u8
+            if avg >= threshold {
+                emit(crystallization_events, { auto_crystallization_candidate: { domain_id: domain_id, count: new_count, avg_confidence: avg } })
+            }
+        }
+    }
+
+    let dims = polykit_metering::DimensionValues { executions: 1, hashes: 1, bandwidth: 0, storage: 256, observables: 1, proofs: 0, circuits: 1, mpc_sessions: 0 }
+    polykit_metering::record_usage(bit_slice(domain_id, 0, 128), "ingest_observation", dims)
+
+    ingestion
+}
+
+/// Trigger crystallization of accumulated meanings within a domain.
+@guard(block_on: crystallization_failed)
+circuit trigger_crystallization(
+    domain_id: DomainId,
+    evidence_hashes: list<ObservationHash>,
+    confidence: u8,
+    witness_key: bytes(4896),
+) -> CrystallizationEvent
+    profile poly_framework_sensitive
+    lex polylabs/polykit/cognitive
+    precision A
+    attested true
+    constant_time true
+    observe metrics: [crystallizations, crystallization_confidence, evidence_counts]
+    monitor "crystallization_rate" { crystallizations < 1000 per 3600s }
+    invariant "domain_exists" { store_get("cognitive_domains", domain_id) != null }
+    invariant "evidence_nonempty" { len(evidence_hashes) > 0 }
+    invariant "confidence_bounded" { confidence > 0 and confidence <= 100 }
+    property safety "witness_binding" { witness_hash commits to domain_id + meaning_id + evidence }
+    property safety "no_sk_in_output" { output contains no witness_key bits }
+    fuzz_target
+    meters [compute_cycles, memory_bytes, storage]
+    wasm_abi [store_get, store_put, emit, mldsa_sign, now]
+    test golden "crystallize_messenger_meanings" {
+        let did = bytes(32, 0xAA)
+        let ev1 = bytes(32, 0xBB)
+        let ev2 = bytes(32, 0xCC)
+        let wk = bytes(4896, 0xDD)
+        let result = trigger_crystallization(did, [ev1, ev2], 92, wk)
+        assert len(result.meaning_id) == 32
+        assert result.evidence_count == 2
+        assert result.confidence == 92
+        assert len(result.witness_hash) == 32
+    }
+{
+    let ts = now()
+
+    let domain = decode<ProductMeaningDomain>(store_get("cognitive_domains", domain_id))
+    if domain == null { guard_fail(crystallization_failed) }
+
+    if confidence < domain.crystallization_threshold {
+        guard_fail(crystallization_failed)
+    }
+
+    let evidence_count = len(evidence_hashes) as u16
+    let evidence_concat = bytes(0)
+    for hash in evidence_hashes {
+        evidence_concat = concat(evidence_concat, hash)
+    }
+
+    let meaning_id = sha3_256(concat(domain_id, evidence_concat, encode(ts)))
+    let witness_payload = concat(domain_id, meaning_id, evidence_concat, encode(confidence), encode(ts))
+    let witness_signature = mldsa_sign(witness_key, witness_payload)
+    let witness_hash = sha3_256(witness_signature)
+
+    let event = CrystallizationEvent {
+        domain_id: domain_id,
+        meaning_id: meaning_id,
+        evidence_count: evidence_count,
+        confidence: confidence,
+        crystallized_at: ts,
+        witness_hash: witness_hash,
+    }
+
+    store_put("cognitive_crystallizations", meaning_id, encode(event))
+    store_put("cognitive_last_crystallization", domain_id, encode(ts))
+    emit(crystallization_events, { crystallized: { domain_id: domain_id, meaning_id: meaning_id, confidence: confidence, evidence_count: evidence_count } })
+
+    let dims = polykit_metering::DimensionValues { executions: 1, hashes: 3, bandwidth: 0, storage: 512, observables: 1, proofs: 1, circuits: 1, mpc_sessions: 0 }
+    polykit_metering::record_usage(bit_slice(domain_id, 0, 128), "trigger_crystallization", dims)
+
+    zeroize(witness_key)
+    event
+}
+
+/// Configure the CE pipeline for a specific product.
+@guard(block_on: config_failed)
+circuit configure_product_ce(
+    product_lex: bytes(128),
+    domain_ids: list<DomainId>,
+    noise_filter_id: NoiseFilterId,
+    sme_panel_id: SmePanelId,
+    ssm_grounding_enabled: bool,
+    crystallization_auto: bool,
+) -> ProductCEConfig
+    profile poly_framework_standard
+    lex polylabs/polykit/cognitive
+    precision B
+    rbac [admin]
+    observe metrics: [configs_written, products_configured]
+    invariant "product_lex_nonempty" { len(product_lex) > 0 }
+    invariant "domains_nonempty" { len(domain_ids) > 0 }
+    invariant "domains_exist" { all(domain_ids, |d| store_get("cognitive_domains", d) != null) }
+    property liveness "config_persisted" { eventually(config_stored) }
+    meters [compute_cycles, memory_bytes, storage]
+    wasm_abi [store_get, store_put, emit, now]
+{
+    for did in domain_ids {
+        let domain = store_get("cognitive_domains", did)
+        if domain == null { guard_fail(config_failed) }
+    }
+
+    let config = ProductCEConfig {
+        product_lex: product_lex,
+        domains: domain_ids,
+        noise_filter_id: noise_filter_id,
+        sme_panel_id: sme_panel_id,
+        ssm_grounding_enabled: ssm_grounding_enabled,
+        crystallization_auto: crystallization_auto,
+    }
+
+    store_put("cognitive_configs", product_lex, encode(config))
+    emit(product_meaning_domains, { product_configured: { product_lex: product_lex, domain_count: len(domain_ids) } })
+
+    let dims = polykit_metering::DimensionValues { executions: 1, hashes: 0, bandwidth: 0, storage: 256, observables: 1, proofs: 0, circuits: 1, mpc_sessions: 0 }
+    polykit_metering::record_usage(bit_slice(product_lex, 0, 128), "configure_product_ce", dims)
+
+    config
+}
+
+/// Query health metrics for a meaning domain.
+circuit query_domain_health(
+    domain_id: DomainId,
+) -> DomainHealthSnapshot
+    profile poly_framework_standard
+    lex polylabs/polykit/cognitive
+    precision B
+    observe metrics: [health_queries]
+    invariant "domain_specified" { len(domain_id) == 32 }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [store_get, store_scan, now]
+{
+    let ts = now()
+
+    let domain = decode<ProductMeaningDomain>(store_get("cognitive_domains", domain_id))
+    if domain == null {
+        return DomainHealthSnapshot {
+            domain_id: domain_id,
+            meaning_count: 0,
+            avg_confidence: 0,
+            last_crystallization: 0,
+            staleness_seconds: 0,
+        }
+    }
+
+    let count_key = concat("ingestion_count:", domain_id)
+    let meaning_count = decode<u64>(store_get("cognitive_counters", count_key))
+    let count = if meaning_count != null { meaning_count } else { 0 }
+
+    let conf_key = concat("confidence_sum:", domain_id)
+    let conf_sum = decode<u64>(store_get("cognitive_counters", conf_key))
+    let avg_confidence = if count > 0 and conf_sum != null { (conf_sum / count) as u8 } else { 0 }
+
+    let last_cryst_raw = store_get("cognitive_last_crystallization", domain_id)
+    let last_crystallization = if last_cryst_raw != null { decode<u64>(last_cryst_raw) } else { 0 }
+
+    let staleness = if last_crystallization > 0 { (ts - last_crystallization) / 1000 } else { (ts - domain.created_at) / 1000 }
+
+    DomainHealthSnapshot {
+        domain_id: domain_id,
+        meaning_count: count,
+        avg_confidence: avg_confidence,
+        last_crystallization: last_crystallization,
+        staleness_seconds: staleness,
+    }
+}
+
+// ── Test / KAT / Fuzz annotations ──────────────────────────────────
+
+test golden "register_and_query_domain_health" {
+    setup {
+        let plex = bytes(128, 0x01)
+        let dname = bytes(64, 0x02)
+        let ddesc = bytes(256, 0x03)
+    }
+    input {
+        product_lex: plex
+        domain_name: dname
+        domain_description: ddesc
+        crystallization_threshold: 75
+        impact_weight: 60
+    }
+    assert {
+        len(result.domain_id) == 32
+        result.crystallization_threshold == 75
+    }
+}
+
+test golden "ingest_and_verify_counter" {
+    setup {
+        let did = bytes(32, 0xAA)
+        let ohash = bytes(32, 0xBB)
+        let src = bytes(64, 0xCC)
+    }
+    input {
+        domain_id: did
+        observation_hash: ohash
+        source_module: src
+        confidence_score: 90
+    }
+    assert {
+        result.domain_id == did
+        result.observation_hash == ohash
+        result.confidence_score == 90
+    }
+}
+
+test golden "crystallize_with_witness" {
+    setup {
+        let did = bytes(32, 0xAA)
+        let ev1 = bytes(32, 0xBB)
+        let ev2 = bytes(32, 0xCC)
+        let ev3 = bytes(32, 0xDD)
+        let wk = bytes(4896, 0xEE)
+    }
+    input {
+        domain_id: did
+        evidence_hashes: [ev1, ev2, ev3]
+        confidence: 95
+        witness_key: wk
+    }
+    assert {
+        len(result.meaning_id) == 32
+        result.evidence_count == 3
+        result.confidence == 95
+        len(result.witness_hash) == 32
+    }
+}
+
+fuzz_target "meaning_domain_registration_fuzz" {
+    inputs {
+        product_lex: bytes(128)
+        domain_name: bytes(64)
+        domain_description: bytes(256)
+        crystallization_threshold: u8(1..100)
+        impact_weight: u8(1..100)
+    }
+    assert {
+        no_panic
+    }
+}
+
+fuzz_target "observation_ingestion_fuzz" {
+    inputs {
+        domain_id: bytes(32)
+        observation_hash: bytes(32)
+        source_module: bytes(64)
+        confidence_score: u8(0..100)
+    }
+    assert {
+        no_panic
+    }
+}
+
+fuzz_target "crystallization_fuzz" {
+    inputs {
+        domain_id: bytes(32)
+        evidence_hashes: list<bytes(32)>(1..32)
+        confidence: u8(1..100)
+        witness_key: bytes(4896)
+    }
+    assert {
+        no_panic
+        constant_time true
+    }
+}

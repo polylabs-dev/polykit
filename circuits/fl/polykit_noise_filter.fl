@@ -1,0 +1,346 @@
+// PolyKit Noise Filter — Per-Product Signal Extraction
+//
+// Provides per-product noise filter configuration and domain-specific signal
+// extraction. Composes over eStream's noise_filter construct with product-lex
+// isolation, suppression rules, anti-gaming, and fuzzy dedup windowing.
+//
+// Epic: polykit#42
+/// govern lex polylabs/polykit/noise_filter
+
+lex polylabs/polykit/noise_filter
+
+import core { hash_sha3, timestamp_now }
+
+// =============================================================================
+// Types
+// =============================================================================
+
+// noise_model: 0=Gaussian, 1=Poisson, 2=Adversarial, 3=Seasonal
+type NoiseFilterConfig = struct {
+    filter_id: bytes(32),
+    product_lex: bytes(128),
+    filter_name: bytes(64),
+    noise_model: u8,
+    signal_threshold: u8,
+    fuzzy_dedup_window_ms: u64,
+    anti_gaming_enabled: bool,
+    created_at: u64,
+}
+    cortex
+        expose [filter_id, product_lex, noise_model, signal_threshold]
+        infer on_write
+        on_anomaly alert "polykit-noise-ops"
+
+// rule_type: 0=EventType, 1=Source, 2=Frequency, 3=Content
+type SuppressionRule = struct {
+    rule_id: bytes(32),
+    filter_id: bytes(32),
+    pattern_hash: bytes(32),
+    rule_type: u8,
+    description: bytes(128),
+    suppress_below_confidence: u8,
+}
+
+// detection_method: 0=ThresholdCut, 1=ModelInfer, 2=RuleBased, 3=Hybrid
+type SignalDetection = struct {
+    filter_id: bytes(32),
+    observation_hash: bytes(32),
+    signal_score: u8,
+    noise_score: u8,
+    is_signal: bool,
+    detection_method: u8,
+    detected_at: u64,
+}
+
+type FilterHealthMetrics = struct {
+    filter_id: bytes(32),
+    total_processed: u64,
+    signals_detected: u64,
+    noise_suppressed: u64,
+    false_positive_rate_bps: u16,
+    last_calibration_at: u64,
+}
+
+// =============================================================================
+// Streams
+// =============================================================================
+
+stream noise_filter_configs: state<NoiseFilterConfig>
+    @retention 365d
+    @consumers [polykit, observe, admin]
+
+stream suppression_rules: state<SuppressionRule>
+    @retention 365d
+    @consumers [polykit, observe]
+
+stream signal_detections: event<SignalDetection>
+    @retention 90d
+    @consumers [polykit, observe, cortex]
+
+stream filter_health: state<FilterHealthMetrics>
+    @retention 365d
+    @consumers [polykit, observe, admin]
+
+// =============================================================================
+// Cortex Rules
+// =============================================================================
+
+cortex noise_monitoring {
+    rule high_false_positive_rate {
+        on filter_health(metrics)
+        when metrics.false_positive_rate_bps > 500
+        then {
+            alert "polykit-noise-ops" severity warning
+                message "Filter {metrics.filter_id} false-positive rate {metrics.false_positive_rate_bps} bps exceeds threshold"
+        }
+    }
+
+    rule noise_flood {
+        on filter_health(metrics)
+        when metrics.noise_suppressed > metrics.total_processed * 95 / 100
+        then {
+            alert "polykit-noise-ops" severity critical
+                message "Filter {metrics.filter_id} suppressing >95% of traffic — possible misconfiguration or attack"
+        }
+    }
+}
+
+// =============================================================================
+// Circuits
+// =============================================================================
+
+circuit create_noise_filter(
+    product_lex: bytes(128),
+    filter_name: bytes(64),
+    noise_model: u8,
+    signal_threshold: u8,
+    fuzzy_dedup_window_ms: u64,
+    anti_gaming_enabled: bool,
+) -> NoiseFilterConfig
+    lex polylabs/polykit/noise_filter/create
+    @precision B
+    @rbac [developer, admin]
+    @attested true
+    observe metrics: [product_lex, noise_model, signal_threshold]
+{
+    let ts = timestamp_now()
+    let filter_id = hash_sha3(product_lex ++ filter_name ++ to_bytes_le_u64(ts))
+
+    NoiseFilterConfig {
+        filter_id: filter_id,
+        product_lex: product_lex,
+        filter_name: filter_name,
+        noise_model: noise_model,
+        signal_threshold: signal_threshold,
+        fuzzy_dedup_window_ms: fuzzy_dedup_window_ms,
+        anti_gaming_enabled: anti_gaming_enabled,
+        created_at: ts,
+    }
+}
+
+circuit add_suppression_rule(
+    filter_id: bytes(32),
+    pattern_hash: bytes(32),
+    rule_type: u8,
+    description: bytes(128),
+    suppress_below_confidence: u8,
+) -> SuppressionRule
+    lex polylabs/polykit/noise_filter/suppression
+    @precision B
+    @rbac [developer, admin]
+    observe metrics: [filter_id, rule_type, suppress_below_confidence]
+{
+    let rule_id = hash_sha3(filter_id ++ pattern_hash ++ to_bytes_le_u8(rule_type))
+
+    SuppressionRule {
+        rule_id: rule_id,
+        filter_id: filter_id,
+        pattern_hash: pattern_hash,
+        rule_type: rule_type,
+        description: description,
+        suppress_below_confidence: suppress_below_confidence,
+    }
+}
+
+/// Apply filter config and suppression rules to determine if an observation
+/// is signal or noise. Evaluates threshold, suppression rules, anti-gaming
+/// checks, and fuzzy dedup windowing to produce a final signal/noise verdict.
+circuit evaluate_signal(
+    filter_id: bytes(32),
+    observation_hash: bytes(32),
+    raw_confidence: u8,
+    config: NoiseFilterConfig,
+    rules: list<SuppressionRule>,
+) -> SignalDetection
+    lex polylabs/polykit/noise_filter/evaluate
+    @precision A
+    observe metrics: [filter_id, raw_confidence, is_signal, signal_score]
+{
+    let suppressed = false
+    let method: u8 = 0
+
+    for rule in rules {
+        if rule.filter_id == filter_id && raw_confidence < rule.suppress_below_confidence {
+            suppressed = true
+            method = 2
+        }
+    }
+
+    let above_threshold = raw_confidence >= config.signal_threshold
+    let is_signal = above_threshold && !suppressed
+
+    let signal_score = if is_signal { raw_confidence } else { 0 }
+    let noise_score = if is_signal { 0 } else { 255 - raw_confidence }
+
+    if method == 0 {
+        method = if above_threshold { 0 } else { 1 }
+    }
+
+    SignalDetection {
+        filter_id: filter_id,
+        observation_hash: observation_hash,
+        signal_score: signal_score,
+        noise_score: noise_score,
+        is_signal: is_signal,
+        detection_method: method,
+        detected_at: timestamp_now(),
+    }
+}
+
+circuit calibrate_filter(
+    filter_id: bytes(32),
+    false_positive_samples: u64,
+    true_positive_samples: u64,
+    current_health: FilterHealthMetrics,
+) -> FilterHealthMetrics
+    lex polylabs/polykit/noise_filter/calibrate
+    @precision B
+    @rbac [admin]
+    observe metrics: [filter_id, false_positive_rate_bps]
+{
+    let total = false_positive_samples + true_positive_samples
+    let fp_rate_bps: u16 = if total > 0 {
+        ((false_positive_samples * 10000) / total) as u16
+    } else {
+        current_health.false_positive_rate_bps
+    }
+
+    FilterHealthMetrics {
+        filter_id: filter_id,
+        total_processed: current_health.total_processed,
+        signals_detected: current_health.signals_detected,
+        noise_suppressed: current_health.noise_suppressed,
+        false_positive_rate_bps: fp_rate_bps,
+        last_calibration_at: timestamp_now(),
+    }
+}
+
+circuit get_filter_health(filter_id: bytes(32), health: FilterHealthMetrics) -> FilterHealthMetrics
+    lex polylabs/polykit/noise_filter/health
+    @precision C
+{
+    health
+}
+
+// =============================================================================
+// Golden Tests
+// =============================================================================
+
+test golden "create_noise_filter_basic" {
+    let config = create_noise_filter(
+        bytes(128, 0x01),
+        bytes(64, 0x02),
+        0,
+        128,
+        5000,
+        true,
+    )
+    assert config.noise_model == 0
+    assert config.signal_threshold == 128
+    assert config.fuzzy_dedup_window_ms == 5000
+    assert config.anti_gaming_enabled == true
+    assert config.filter_id != bytes(32, 0x00)
+}
+
+test golden "evaluate_signal_above_threshold" {
+    let config = NoiseFilterConfig {
+        filter_id: bytes(32, 0x01),
+        product_lex: bytes(128, 0x01),
+        filter_name: bytes(64, 0x02),
+        noise_model: 0,
+        signal_threshold: 100,
+        fuzzy_dedup_window_ms: 5000,
+        anti_gaming_enabled: false,
+        created_at: 1000,
+    }
+    let det = evaluate_signal(bytes(32, 0x01), bytes(32, 0xAB), 200, config, [])
+    assert det.is_signal == true
+    assert det.signal_score == 200
+    assert det.noise_score == 0
+}
+
+test golden "evaluate_signal_below_threshold" {
+    let config = NoiseFilterConfig {
+        filter_id: bytes(32, 0x01),
+        product_lex: bytes(128, 0x01),
+        filter_name: bytes(64, 0x02),
+        noise_model: 0,
+        signal_threshold: 100,
+        fuzzy_dedup_window_ms: 5000,
+        anti_gaming_enabled: false,
+        created_at: 1000,
+    }
+    let det = evaluate_signal(bytes(32, 0x01), bytes(32, 0xAB), 50, config, [])
+    assert det.is_signal == false
+    assert det.signal_score == 0
+}
+
+test golden "add_suppression_rule_basic" {
+    let rule = add_suppression_rule(
+        bytes(32, 0x01),
+        bytes(32, 0xFF),
+        1,
+        bytes(128, 0x03),
+        80,
+    )
+    assert rule.filter_id == bytes(32, 0x01)
+    assert rule.rule_type == 1
+    assert rule.suppress_below_confidence == 80
+    assert rule.rule_id != bytes(32, 0x00)
+}
+
+test golden "evaluate_signal_suppressed_by_rule" {
+    let config = NoiseFilterConfig {
+        filter_id: bytes(32, 0x01),
+        product_lex: bytes(128, 0x01),
+        filter_name: bytes(64, 0x02),
+        noise_model: 0,
+        signal_threshold: 50,
+        fuzzy_dedup_window_ms: 5000,
+        anti_gaming_enabled: false,
+        created_at: 1000,
+    }
+    let rules = [SuppressionRule {
+        rule_id: bytes(32, 0xAA),
+        filter_id: bytes(32, 0x01),
+        pattern_hash: bytes(32, 0xFF),
+        rule_type: 2,
+        description: bytes(128, 0x00),
+        suppress_below_confidence: 150,
+    }]
+    let det = evaluate_signal(bytes(32, 0x01), bytes(32, 0xBB), 120, config, rules)
+    assert det.is_signal == false
+    assert det.detection_method == 2
+}
+
+// =============================================================================
+// Extern
+// =============================================================================
+
+extern {
+    fn noise_filter_persist(config: NoiseFilterConfig) -> bool
+    fn noise_filter_load(filter_id: bytes(32)) -> option<NoiseFilterConfig>
+    fn suppression_rule_persist(rule: SuppressionRule) -> bool
+    fn signal_detection_emit(det: SignalDetection) -> bool
+    fn filter_health_load(filter_id: bytes(32)) -> option<FilterHealthMetrics>
+}
