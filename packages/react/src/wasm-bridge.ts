@@ -1,5 +1,5 @@
 /**
- * WASM Bridge — typed FFI between React and polykit.wasm
+ * WASM Bridge — typed FFI between React and qkit.wasm
  *
  * This is the ONLY file that calls wasm-bindgen exports directly.
  * All other TS files in this package call through this bridge.
@@ -26,8 +26,8 @@ export interface PolykitWasm {
 let wasmInstance: PolykitWasm | null = null;
 
 /**
- * Load and initialize the PolyKit WASM module.
- * Called once from PolyProvider on mount.
+ * Load and initialize the QKit WASM module.
+ * Called once from QProvider on mount.
  */
 export async function loadWasm(wasmUrl: string): Promise<PolykitWasm> {
   if (wasmInstance) return wasmInstance;
@@ -44,7 +44,7 @@ export async function loadWasm(wasmUrl: string): Promise<PolykitWasm> {
  */
 export function getWasm(): PolykitWasm {
   if (!wasmInstance) {
-    throw new Error('PolyKit WASM not loaded. Wrap your app in <PolyProvider>.');
+    throw new Error('QKit WASM not loaded. Wrap your app in <QProvider>.');
   }
   return wasmInstance;
 }
@@ -55,7 +55,7 @@ export function getWasm(): PolykitWasm {
 export function parseWasmResponse<T>(json: string): T {
   const parsed = JSON.parse(json);
   if (parsed.error) {
-    throw new Error(`PolyKit WASM error: ${parsed.error}`);
+    throw new Error(`QKit WASM error: ${parsed.error}`);
   }
   return parsed as T;
 }

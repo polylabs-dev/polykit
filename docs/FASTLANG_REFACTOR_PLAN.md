@@ -1,4 +1,4 @@
-# PolyKit FastLang Refactor Design
+# QKit FastLang Refactor Design
 
 > **Version**: 0.2.0
 > **Date**: February 2026
@@ -10,24 +10,24 @@
 
 ## Current State
 
-PolyKit v0.1.0 defines 6 shared circuits as `.flir.yaml` files at FLIR v0.8.1:
+QKit v0.1.0 defines 6 shared circuits as `.flir.yaml` files at FLIR v0.8.1:
 
 | Circuit | YAML File | Exports | Purpose |
 |---------|-----------|---------|---------|
-| polykit-identity | `circuits/polykit-identity/circuit.flir.yaml` | 6 | SPARK auth + HKDF key derivation |
-| polykit-metering | `circuits/polykit-metering/circuit.flir.yaml` | 3 | 8-dimension resource metering |
-| polykit-telemetry | `circuits/polykit-telemetry/circuit.flir.yaml` | 4 | StreamSight "Discard Normal" |
-| polykit-rate-limiter | `circuits/polykit-rate-limiter/circuit.flir.yaml` | 2 | FIFO rate limiter |
-| polykit-sanitize | `circuits/polykit-sanitize/circuit.flir.yaml` | 2 | 3-stage PII/PCI/HIPAA/GDPR |
-| polykit-li_effects-classify | `circuits/polykit-li_effects-classify/circuit.flir.yaml` | 3 | ML classification + human-in-loop |
+| qkit-identity | `circuits/qkit-identity/circuit.flir.yaml` | 6 | SPARK auth + HKDF key derivation |
+| qkit-metering | `circuits/qkit-metering/circuit.flir.yaml` | 3 | 8-dimension resource metering |
+| qkit-telemetry | `circuits/qkit-telemetry/circuit.flir.yaml` | 4 | StreamSight "Discard Normal" |
+| qkit-rate-limiter | `circuits/qkit-rate-limiter/circuit.flir.yaml` | 2 | FIFO rate limiter |
+| qkit-sanitize | `circuits/qkit-sanitize/circuit.flir.yaml` | 2 | 3-stage PII/PCI/HIPAA/GDPR |
+| qkit-li_effects-classify | `circuits/qkit-li_effects-classify/circuit.flir.yaml` | 3 | ML classification + human-in-loop |
 
-These are declarative YAML: they define types, exports, and emissions but contain **no computation logic**. The hand-written Rust in `crates/` implements the actual behavior (~2,500 lines across 5 crates). Additionally, 4 FastLang `.fl` files exist in `estream-io/crates/estream-fastlang/examples/polylabs/` (media_stream, crdt_sync, blind_relay, classified_fusion) serving as platform-level golden sources.
+These are declarative YAML: they define types, exports, and emissions but contain **no computation logic**. The hand-written Rust in `crates/` implements the actual behavior (~2,500 lines across 5 crates). Additionally, 4 FastLang `.fl` files exist in `estream-io/crates/estream-fastlang/examples/polyqlabs/` (media_stream, crdt_sync, blind_relay, classified_fusion) serving as platform-level golden sources.
 
 ---
 
 ## Target State
 
-**FastLang becomes the single source of truth for all PolyKit circuits.** The `.flir.yaml` files are retired. FastLang generates the Rust implementation, the WASM binaries, and the type bindings -- replacing both the YAML definitions and much of the hand-written Rust crate code.
+**FastLang becomes the single source of truth for all QKit circuits.** The `.flir.yaml` files are retired. FastLang generates the Rust implementation, the WASM binaries, and the type bindings -- replacing both the YAML definitions and much of the hand-written Rust crate code.
 
 Key changes:
 - 6 YAML circuits become **10 core `.fl` files + 4 app-level circuits** (telemetry eliminated, regional + app circuits added)
@@ -53,18 +53,18 @@ Same as v0.1.0: **Push everything into Rust/WASM. TypeScript is ONLY a DOM bindi
 ┌──────────────────────────────────────────────────────────────────┐
 │  Browser / React Native                                          │
 │                                                                  │
-│  @polykit/react (thin TS — unchanged)                            │
-│  ├── PolyProvider          loads polykit.wasm, inits SPARK       │
+│  @qkit/react (thin TS — unchanged)                            │
+│  ├── QProvider          loads qkit.wasm, inits SPARK       │
 │  ├── useWasmSubscription   subscribes via WASM wire client       │
 │  ├── useWasmEmit           emits via WASM wire client            │
 │  └── WidgetShell           layout + RBAC gate                    │
 ├──────────────────────────────────────────────────────────────────┤
-│  polykit.wasm (FastLang → FLIR → Rust/WASM codegen)            │
+│  qkit.wasm (FastLang → FLIR → Rust/WASM codegen)            │
 │                                                                  │
 │  circuits/fl/*.fl          8 circuits + 1 platform composition   │
-│  polykit-core              thin kernel (AppContext, helpers)      │
-│  polykit-eslite            migrations, queries, sync             │
-│  polykit-console           event bus, widget data, demo, RBAC    │
+│  qkit-core              thin kernel (AppContext, helpers)      │
+│  qkit-eslite            migrations, queries, sync             │
+│  qkit-console           event bus, widget data, demo, RBAC    │
 ├──────────────────────────────────────────────────────────────────┤
 │  eStream Wire Protocol (UDP :5000 / WebTransport :4433)          │
 └──────────────────────────────────────────────────────────────────┘
@@ -76,7 +76,7 @@ Same as v0.1.0: **Push everything into Rust/WASM. TypeScript is ONLY a DOM bindi
 
 A v0.8.3 feature: define once, use everywhere. Replaces 5-7 repeated annotations on every circuit.
 
-**`circuits/fl/polykit_profile.fl`**:
+**`circuits/fl/qkit_profile.fl`**:
 
 ```fastlang
 amplify enterprise {
@@ -85,7 +85,7 @@ amplify enterprise {
 }
 
 profile poly_framework_standard {
-    lex esn/global/org/polylabs
+    lex esn/global/org/polyqlabs
     precision C
     budget wasm_bytes 64KB, memory_pages 32, instantiation_ms 25
     meters [compute_cycles, memory_bytes, crypto_ops, bandwidth_bytes]
@@ -109,7 +109,7 @@ Every circuit inheriting `poly_framework_standard` gets baseline StreamSight tel
 
 ## Inline StreamSight Telemetry (No Separate Circuit)
 
-The `polykit-telemetry/circuit.flir.yaml` is **not converted to its own `.fl` file**. StreamSight is designed to be native and inline -- the FastLang compiler automatically weaves telemetry into generated code. This matches the pattern used across all 47 `.fl` files in estream-io.
+The `qkit-telemetry/circuit.flir.yaml` is **not converted to its own `.fl` file**. StreamSight is designed to be native and inline -- the FastLang compiler automatically weaves telemetry into generated code. This matches the pattern used across all 47 `.fl` files in estream-io.
 
 | Mechanism | Syntax | Applied Where | Effect |
 |-----------|--------|---------------|--------|
@@ -126,9 +126,9 @@ The profile provides baseline telemetry. Individual circuits add domain-specific
 
 ## FastLang Circuit Files
 
-### Circuit 1: Identity (`polykit_identity.fl`)
+### Circuit 1: Identity (`qkit_identity.fl`)
 
-Replaces `circuits/polykit-identity/circuit.flir.yaml` AND most of `crates/polykit-core/src/identity.rs` + `crypto.rs`.
+Replaces `circuits/qkit-identity/circuit.flir.yaml` AND most of `crates/qkit-core/src/identity.rs` + `crypto.rs`.
 
 ```fastlang
 type MasterSeed = bytes(32)
@@ -149,7 +149,7 @@ type EncapsulatedKey = struct {
 
 circuit derive_keys(master_seed: MasterSeed, hkdf_context: bytes(64)) -> DerivedKeys
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/identity
+    lex esn/global/org/polyqlabs/identity
     constant_time true
     observe metrics: [key_derivations, hkdf_ops, signing_key_generations]
     monitor "derivation_latency" { derivation_time_ms < 50 }
@@ -206,9 +206,9 @@ circuit encapsulate_key(recipient_pk: bytes(1568)) -> EncapsulatedKey
 
 ---
 
-### Circuit 2: Metering (`polykit_metering.fl`)
+### Circuit 2: Metering (`qkit_metering.fl`)
 
-Replaces `circuits/polykit-metering/circuit.flir.yaml` AND `crates/polykit-core/src/metering.rs`.
+Replaces `circuits/qkit-metering/circuit.flir.yaml` AND `crates/qkit-core/src/metering.rs`.
 
 ```fastlang
 type MeteringDimension = enum {
@@ -260,9 +260,9 @@ circuit check_limits(current: DimensionValues, limits: DimensionValues) -> [Mete
 
 ---
 
-### Circuit 3: Rate Limiter (`polykit_rate_limiter.fl`)
+### Circuit 3: Rate Limiter (`qkit_rate_limiter.fl`)
 
-Replaces `circuits/polykit-rate-limiter/circuit.flir.yaml`.
+Replaces `circuits/qkit-rate-limiter/circuit.flir.yaml`.
 
 ```fastlang
 type RateWindow = struct {
@@ -312,9 +312,9 @@ circuit check_rate(user_id: bytes(16), operation: string, tier: string) -> RateC
 
 ---
 
-### Circuit 4: Sanitize (`polykit_sanitize.fl`)
+### Circuit 4: Sanitize (`qkit_sanitize.fl`)
 
-Replaces `circuits/polykit-sanitize/circuit.flir.yaml` AND `crates/polykit-sanitize/`.
+Replaces `circuits/qkit-sanitize/circuit.flir.yaml` AND `crates/qkit-sanitize/`.
 
 ```fastlang
 type DataType = enum {
@@ -355,7 +355,7 @@ circuit sanitize(input: bytes) -> SanitizationResult
     witness full
     invariant "no_pii_in_output" { pii_count(sanitized_data) == 0 }
     invariant "audit_complete" { len(audit_entries) >= detections }
-    esz_emit "verify/polykit_sanitize.esz"
+    esz_emit "verify/qkit_sanitize.esz"
     li_feed full_flir true, optimized_ir true
 {
     let detections = li_classify(input, "pii_scan")
@@ -376,9 +376,9 @@ circuit detect_only(input: bytes) -> [Detection; 32]
 
 ---
 
-### Circuit 5: LI Effects Classify (`polykit_li_effects_classify.fl`)
+### Circuit 5: LI Effects Classify (`qkit_li_effects_classify.fl`)
 
-Replaces `circuits/polykit-li_effects-classify/circuit.flir.yaml`.
+Replaces `circuits/qkit-li_effects-classify/circuit.flir.yaml`.
 
 ```fastlang
 type ClassificationSuggestion = struct {
@@ -451,7 +451,7 @@ circuit get_thresholds() -> ConfidenceThresholds
 
 ---
 
-### NEW Circuit 6: Delta Curate (`polykit_delta_curate.fl`)
+### NEW Circuit 6: Delta Curate (`qkit_delta_curate.fl`)
 
 Leverages the Delta Curate concept from [ESTREAM_FEEDBACK.md](ESTREAM_FEEDBACK.md). Not expressible in YAML.
 
@@ -479,7 +479,7 @@ circuit delta_encode(current: bytes(4096), previous: bytes(4096), epoch: u64) ->
     observe metrics: [delta_ratio, epoch_snapshots, bitmask_density]
     monitor "compression_ratio" { delta_ratio > 5 }
     invariant "lossless" { decode(encode(record)) == record }
-    esz_emit "verify/polykit_delta_curate.esz"
+    esz_emit "verify/qkit_delta_curate.esz"
 {
     let changed = bit_slice(current, 0, 64) ^ bit_slice(previous, 0, 64)
     let bitmask = changed
@@ -504,11 +504,11 @@ circuit delta_decode(snapshot: bytes(4096), deltas: [DeltaRecord; 100]) -> Recon
 }
 ```
 
-**Purpose**: ~20x lossless compression for document version tracking (Poly Data), message delivery telemetry (Poly Messenger), and audit-trail data. Bitmask Pattern Proof enables exclusion proofs ("field X did NOT change between T1-T2"). Composable with Curate for ~400x combined reduction.
+**Purpose**: ~20x lossless compression for document version tracking (Poly Data), message delivery telemetry (Q Messenger), and audit-trail data. Bitmask Pattern Proof enables exclusion proofs ("field X did NOT change between T1-T2"). Composable with Curate for ~400x combined reduction.
 
 ---
 
-### NEW Circuit 7: Field Governance (`polykit_governance.fl`)
+### NEW Circuit 7: Field Governance (`qkit_governance.fl`)
 
 Field-level visibility control with filtered fan-out. Not expressible in YAML.
 
@@ -531,7 +531,7 @@ type GovernedRecord = struct {
 
 circuit governed_emit(record: GovernedRecord, classification: string) -> bytes(32)
     profile poly_framework_standard
-    lex esn/global/org/polylabs {
+    lex esn/global/org/polyqlabs {
         governance hierarchical
         audit_trail true
         sub_lex app fan_out share [summary, status] redact [pii_data, raw_content]
@@ -559,36 +559,36 @@ circuit governed_emit(record: GovernedRecord, classification: string) -> bytes(3
 }
 ```
 
-**Purpose**: Shared field-level governance primitive for all Poly Labs apps. 2 bits per field per audience, FPGA wire-speed enforcement. Apps compose this into their domain circuits.
+**Purpose**: Shared field-level governance primitive for all PolyQ Labs apps. 2 bits per field per audience, FPGA wire-speed enforcement. Apps compose this into their domain circuits.
 
 ---
 
-### Platform Composition (`polykit_platform.fl`)
+### Platform Composition (`qkit_platform.fl`)
 
 Ties all circuits together:
 
 ```fastlang
-platform polykit_framework v1 {
-    import polykit_identity from "./polykit_identity.fl"
-    import polykit_metering from "./polykit_metering.fl"
-    import polykit_rate_limiter from "./polykit_rate_limiter.fl"
-    import polykit_sanitize from "./polykit_sanitize.fl"
-    import polykit_li_effects_classify from "./polykit_li_effects_classify.fl"
-    import polykit_delta_curate from "./polykit_delta_curate.fl"
-    import polykit_governance from "./polykit_governance.fl"
+platform qkit_framework v1 {
+    import qkit_identity from "./qkit_identity.fl"
+    import qkit_metering from "./qkit_metering.fl"
+    import qkit_rate_limiter from "./qkit_rate_limiter.fl"
+    import qkit_sanitize from "./qkit_sanitize.fl"
+    import qkit_li_effects_classify from "./qkit_li_effects_classify.fl"
+    import qkit_delta_curate from "./qkit_delta_curate.fl"
+    import qkit_governance from "./qkit_governance.fl"
 
-    group core [polykit_identity, polykit_metering, polykit_rate_limiter]
-    group compliance [polykit_sanitize, polykit_governance]
-    group intelligence [polykit_li_effects_classify, polykit_delta_curate]
+    group core [qkit_identity, qkit_metering, qkit_rate_limiter]
+    group compliance [qkit_sanitize, qkit_governance]
+    group intelligence [qkit_li_effects_classify, qkit_delta_curate]
 
-    connect polykit_identity -> polykit_metering
-    connect polykit_metering -> polykit_rate_limiter
-    connect polykit_sanitize -> polykit_governance
+    connect qkit_identity -> qkit_metering
+    connect qkit_metering -> qkit_rate_limiter
+    connect qkit_sanitize -> qkit_governance
 
-    bind polykit_li_effects_classify -> li_engine
+    bind qkit_li_effects_classify -> li_engine
 
     streamsight true
-    esz_emit "verify/polykit_platform.esz"
+    esz_emit "verify/qkit_platform.esz"
     li_feed full_flir true, optimized_ir true
 
     target wasm_client
@@ -625,11 +625,11 @@ estream-dev build-wasm-client --from-fl circuits/fl/ --sign key.pem --enforce-bu
 
 | Component | Purpose | Estimated Size |
 |-----------|---------|---------------|
-| `polykit-core` | Thin kernel: `AppContext`, `format_user_topic()`, `format_global_topic()`, error types | ~200 lines |
-| `polykit-wasm` | wasm-bindgen shim routing JS calls to codegen'd exports | ~150 lines |
-| `polykit-eslite` | ESLite runtime (migrations, queries, sync) | ~250 lines (unchanged) |
-| `polykit-console` | Widget runtime (event bus, data pipeline, RBAC) | ~300 lines (unchanged) |
-| `packages/react` | `PolyProvider`, hooks, `WidgetShell` | Unchanged |
+| `qkit-core` | Thin kernel: `AppContext`, `format_user_topic()`, `format_global_topic()`, error types | ~200 lines |
+| `qkit-wasm` | wasm-bindgen shim routing JS calls to codegen'd exports | ~150 lines |
+| `qkit-eslite` | ESLite runtime (migrations, queries, sync) | ~250 lines (unchanged) |
+| `qkit-console` | Widget runtime (event bus, data pipeline, RBAC) | ~300 lines (unchanged) |
+| `packages/react` | `QProvider`, hooks, `WidgetShell` | Unchanged |
 
 Total: ~600 lines hand-written Rust (down from ~2,500) + ~800 lines `.fl` circuits.
 
@@ -638,40 +638,40 @@ Total: ~600 lines hand-written Rust (down from ~2,500) + ~800 lines `.fl` circui
 ## File Structure After Refactor
 
 ```
-polykit/
+qkit/
   .github/
     epics/
       EPIC_POLYKIT_FASTLANG_REFACTOR.md
   circuits/
     fl/
-      polykit_profile.fl          # Shared annotation profiles
-      polykit_identity.fl         # SPARK + HKDF + ML-DSA/ML-KEM
-      polykit_metering.fl         # 8-dimension metering
-      polykit_rate_limiter.fl     # Rate limiter with FSM
-      polykit_sanitize.fl         # 3-stage compliance
-      polykit_li_effects.fl        # Learned Intelligence classification + feedback
-      polykit_delta_curate.fl     # Delta curation (NEW)
-      polykit_governance.fl       # Field governance + regional fan-in (NEW)
-      polykit_regional_us.fl      # US sovereignty, CCPA, SOC2 (NEW)
-      polykit_regional_eu.fl      # EU sovereignty, GDPR, EU AI Act (NEW)
-      polykit_platform.fl         # Platform composition (core + regional + apps)
+      qkit_profile.fl          # Shared annotation profiles
+      qkit_identity.fl         # SPARK + HKDF + ML-DSA/ML-KEM
+      qkit_metering.fl         # 8-dimension metering
+      qkit_rate_limiter.fl     # Rate limiter with FSM
+      qkit_sanitize.fl         # 3-stage compliance
+      qkit_li_effects.fl        # Learned Intelligence classification + feedback
+      qkit_delta_curate.fl     # Delta curation (NEW)
+      qkit_governance.fl       # Field governance + regional fan-in (NEW)
+      qkit_regional_us.fl      # US sovereignty, CCPA, SOC2 (NEW)
+      qkit_regional_eu.fl      # EU sovereignty, GDPR, EU AI Act (NEW)
+      qkit_platform.fl         # Platform composition (core + regional + apps)
       apps/
-        polykit_media_stream.fl   # PQ-encrypted voice/video SFU
-        polykit_crdt_sync.fl      # Offline-capable CRDT merge
-        polykit_blind_relay.fl    # Privacy-preserving message relay
-        polykit_classified_fusion.fl  # SCI omniscient fusion
+        qkit_media_stream.fl   # PQ-encrypted voice/video SFU
+        qkit_crdt_sync.fl      # Offline-capable CRDT merge
+        qkit_blind_relay.fl    # Privacy-preserving message relay
+        qkit_classified_fusion.fl  # SCI omniscient fusion
     legacy/                       # Archived .flir.yaml (reference only)
-      polykit-identity/
-      polykit-metering/
-      polykit-telemetry/          # Eliminated as separate circuit
-      polykit-rate-limiter/
-      polykit-sanitize/
-      polykit-eslm-classify/        # Legacy name; now polykit_li_effects.fl
+      qkit-identity/
+      qkit-metering/
+      qkit-telemetry/          # Eliminated as separate circuit
+      qkit-rate-limiter/
+      qkit-sanitize/
+      qkit-eslm-classify/        # Legacy name; now qkit_li_effects.fl
   crates/
-    polykit-core/                 # Slimmed: kernel helpers only
-    polykit-wasm/                 # Slimmed: thin shim over codegen
-    polykit-eslite/               # Mostly unchanged (ESLite runtime)
-    polykit-console/              # Mostly unchanged (widget runtime)
+    qkit-core/                 # Slimmed: kernel helpers only
+    qkit-wasm/                 # Slimmed: thin shim over codegen
+    qkit-eslite/               # Mostly unchanged (ESLite runtime)
+    qkit-console/              # Mostly unchanged (widget runtime)
   packages/react/                 # Unchanged
   docs/
     ARCHITECTURE.md               # Updated for FastLang pipeline
@@ -682,16 +682,16 @@ polykit/
 
 ---
 
-## How Apps Use PolyKit (Updated)
+## How Apps Use QKit (Updated)
 
-Apps depend on PolyKit `.fl` circuits via composition and extend with domain-specific circuits:
+Apps depend on QKit `.fl` circuits via composition and extend with domain-specific circuits:
 
 ```fastlang
-// App circuit composes PolyKit shared circuits
-circuit polymail_inbox(user_id: bytes(16), message: bytes) -> bytes(32)
+// App circuit composes QKit shared circuits
+circuit qmail_inbox(user_id: bytes(16), message: bytes) -> bytes(32)
     profile poly_framework_standard
-    composes: [polykit_identity, polykit_metering, polykit_sanitize]
-    lex esn/global/org/polylabs/polymail
+    composes: [qkit_identity, qkit_metering, qkit_sanitize]
+    lex esn/global/org/polyqlabs/qmail
     observe metrics: [inbox_messages, message_size_avg]
 {
     let sanitized = sanitize(message)
@@ -702,13 +702,13 @@ circuit polymail_inbox(user_id: bytes(16), message: bytes) -> bytes(32)
 
 ```tsx
 // App TS — minimal DOM binding (unchanged)
-import { PolyProvider } from '@polykit/react';
+import { QProvider } from '@qkit/react';
 
 export default function App() {
   return (
-    <PolyProvider wasm="/pkg/polymail.wasm" hkdfContext="poly-mail-v1">
+    <QProvider wasm="/pkg/qmail.wasm" hkdfContext="q-mail-v1">
       <WidgetGrid />
-    </PolyProvider>
+    </QProvider>
   );
 }
 ```

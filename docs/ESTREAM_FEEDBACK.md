@@ -1,7 +1,7 @@
-# eStream Platform Feedback from PolyKit Development
+# eStream Platform Feedback from QKit Development
 
 > Running document capturing what works, what doesn't, and upstream improvement suggestions
-> as we build PolyKit on the eStream v0.8.1 platform.
+> as we build QKit on the eStream v0.8.1 platform.
 >
 > This will be reviewed periodically and translated into `polyquantum/estream-io` issues.
 
@@ -30,8 +30,8 @@
 ## Pain Points / Gaps Discovered
 
 ### 1. Size Budget for Shared Libraries (OBSERVATION)
-- **Issue**: PolyKit is a *shared* framework, not a single app. The 128 KB/circuit and 512 KB total budgets were designed for individual app circuits.
-- **Question**: When polykit-core, polykit-eslite, polykit-console, and polykit-sanitize are combined into a single WASM module, will we hit the 512 KB ceiling? Shared library overhead (PQ crypto primitives, ESLite engine, sanitization regexes) may be significant.
+- **Issue**: QKit is a *shared* framework, not a single app. The 128 KB/circuit and 512 KB total budgets were designed for individual app circuits.
+- **Question**: When qkit-core, qkit-eslite, qkit-console, and qkit-sanitize are combined into a single WASM module, will we hit the 512 KB ceiling? Shared library overhead (PQ crypto primitives, ESLite engine, sanitization regexes) may be significant.
 - **Suggestion**: Consider a "shared library" exemption or a two-tier budget: ≤512 KB for shared framework WASM, ≤512 KB for app-specific circuits, with a combined ceiling of ≤1 MB.
 - **Status**: Needs measurement once integration is complete.
 
@@ -48,7 +48,7 @@
 - **Status**: Needs architectural decision.
 
 ### 3. Circuit Composition / Imports (QUESTION)
-- **Issue**: FLIR circuits currently seem designed as standalone units. PolyKit needs circuits that *compose* — e.g., `polymail-inbox` should be able to `import polykit-identity` and `polykit-metering`.
+- **Issue**: FLIR circuits currently seem designed as standalone units. QKit needs circuits that *compose* — e.g., `qmail-inbox` should be able to `import qkit-identity` and `qkit-metering`.
 - **Question**: Does the FLIR `imports` mechanism support cross-circuit dependencies at the WASM level? Or does composition happen at the Rust crate level before WASM compilation?
 - **Suggestion**: If not already supported, add an FLIR `imports:` directive that resolves to Rust `use` statements in the codegen output.
 - **Status**: Needs investigation.
@@ -98,8 +98,8 @@ Support a higher size budget for shared framework WASM modules (≤1 MB) vs app-
 
 ## FLIR Annotation Enhancement Proposals
 
-> These proposals emerged from writing 15+ circuit definitions across PolyKit,
-> Poly Data, and Poly Messenger, plus reviewing circuits in SynergyCarbon,
+> These proposals emerged from writing 15+ circuit definitions across QKit,
+> Poly Data, and Q Messenger, plus reviewing circuits in SynergyCarbon,
 > TrueResolve, and TakeTitle. Filed as `polyquantum/estream-io` issue.
 
 ### Proposal 1: Annotation Profiles (`profile:`)
@@ -133,7 +133,7 @@ override:
 ```yaml
 # profiles/poly-app-standard.yaml
 profile: "poly-app-standard"
-description: "Standard Poly Labs app circuit profile"
+description: "Standard PolyQ Labs app circuit profile"
 inherits: "estream-default"       # optional: inherit from another profile
 annotations:
   "@streamsight_filter": "baseline"
@@ -215,7 +215,7 @@ use estream_kernel::crypto::ml_dsa_87;
 
 ### Proposal 3: `@meters` — Metering Dimension Declaration
 
-**Problem**: Every Poly app uses the 8-dimension metering model (E/H/B/S/O/P/C/M), but developers must manually add `ctx.metering.record()` calls in every export function. This is easy to forget and hard to audit.
+**Problem**: Every Q app uses the 8-dimension metering model (E/H/B/S/O/P/C/M), but developers must manually add `ctx.metering.record()` calls in every export function. This is easy to forget and hard to audit.
 
 **Proposed**:
 ```yaml
@@ -302,7 +302,7 @@ The FLIR → Rust codegen wraps every `emit()` call with sanitization:
 // Auto-generated wrapper for emission from @sanitize circuit
 fn emit_sanitized(ctx: &mut Context, topic: &str, payload: &[u8]) -> Result<()> {
     // AUTO-GENERATED from @sanitize: ["HIPAA", "PCI-DSS", "GDPR"]
-    let sanitized = polykit_sanitize::sanitize_with_scope(
+    let sanitized = qkit_sanitize::sanitize_with_scope(
         payload,
         &[Regulation::Hipaa, Regulation::PciDss, Regulation::Gdpr],
     );
@@ -327,7 +327,7 @@ error[FLIR-S001]: unsanitized emission in @sanitize circuit
   --> polydata-storage-router/circuit.flir.yaml:42
   |
   | export fn scatter_complete:
-  |     ctx.emit("polylabs.data.upload.confirm", raw_payload)
+  |     ctx.emit("polyqlabs.data.upload.confirm", raw_payload)
   |     ^^^^^^^^ this emission bypasses @sanitize pipeline
   |
   = help: use ctx.emit_sanitized() or add topic to @sanitize.exempt
@@ -382,28 +382,28 @@ pub fn evaluate(ctx_ptr: i32) -> i32 {
 }
 ```
 
-The `@polykit/react` `WidgetShell` reads this from the manifest — no need to duplicate roles in TS.
+The `@qkit/react` `WidgetShell` reads this from the manifest — no need to duplicate roles in TS.
 
 ---
 
 ### Proposal 6: `composes:` — Circuit Composition with Versioning
 
-**Problem**: FLIR circuits are designed as standalone units, but real apps need composition. `polymail-inbox` depends on `polykit-identity` and `polykit-metering`. Today this dependency is implicit (Rust `use` statements). The build pipeline can't validate, tree-shake, or enforce budgets across the composition graph.
+**Problem**: FLIR circuits are designed as standalone units, but real apps need composition. `qmail-inbox` depends on `qkit-identity` and `qkit-metering`. Today this dependency is implicit (Rust `use` statements). The build pipeline can't validate, tree-shake, or enforce budgets across the composition graph.
 
 **Proposed**:
 ```yaml
 flir: "0.8.1"
-name: polymail-inbox
+name: qmail-inbox
 version: "0.1.0"
 
 composes:
-  - circuit: polykit-identity
+  - circuit: qkit-identity
     version: "^0.1.0"
     imports: [derive_keys, sign, verify]    # selective imports
-  - circuit: polykit-metering
+  - circuit: qkit-metering
     version: "^0.1.0"
     imports: [record_usage, check_limits]
-  - circuit: polykit-sanitize
+  - circuit: qkit-sanitize
     version: "^0.1.0"
     imports: [sanitize]                     # imports all if omitted
 ```
@@ -414,9 +414,9 @@ The FLIR compiler resolves `composes:` into a dependency graph, validates versio
 
 ```rust
 // AUTO-GENERATED from composes: section
-use polykit_identity::{derive_keys, sign, verify};
-use polykit_metering::{record_usage, check_limits};
-use polykit_sanitize::sanitize;
+use qkit_identity::{derive_keys, sign, verify};
+use qkit_metering::{record_usage, check_limits};
+use qkit_sanitize::sanitize;
 ```
 
 **Codegen: tree-shaking from selective imports**:
@@ -424,8 +424,8 @@ use polykit_sanitize::sanitize;
 When `imports:` lists specific functions, the codegen emits `#[allow(dead_code)]` only for those functions, and `wasm-opt` eliminates unused code from composed circuits. This directly helps hit size budgets:
 
 ```
-polykit-identity full:   64 KB
-polykit-identity [derive_keys, sign, verify]:  28 KB  (56% smaller)
+qkit-identity full:   64 KB
+qkit-identity [derive_keys, sign, verify]:  28 KB  (56% smaller)
 ```
 
 **Codegen: budget aggregation**:
@@ -433,10 +433,10 @@ polykit-identity [derive_keys, sign, verify]:  28 KB  (56% smaller)
 The build pipeline sums `@budget.wasm` across all composed circuits and checks the aggregate against `bundle_class` ceiling:
 
 ```
-polymail-inbox:     42 KB  (@budget.wasm: 48KB)
-polykit-identity:   28 KB  (selective)
-polykit-metering:   12 KB  (selective)
-polykit-sanitize:   18 KB  (full)
+qmail-inbox:     42 KB  (@budget.wasm: 48KB)
+qkit-identity:   28 KB  (selective)
+qkit-metering:   12 KB  (selective)
+qkit-sanitize:   18 KB  (full)
 ─────────────────────────
 Total:             100 KB  (vs. 512 KB app ceiling) ✓
 ```
@@ -446,7 +446,7 @@ Total:             100 KB  (vs. 512 KB app ceiling) ✓
 ```yaml
 # circuit.lock — auto-generated, committed to repo
 [[circuit]]
-name = "polykit-identity"
+name = "qkit-identity"
 version = "0.1.3"
 hash = "sha3-256:abc123..."
 ```
@@ -508,9 +508,9 @@ The build pipeline extracts the `wire:` contract into the `.escd` manifest, enab
 ```json
 {
   "wire_contract": {
-    "subscribes": ["polylabs.data.*.upload"],
-    "emits": ["lex://estream/apps/polylabs.data/telemetry", "polylabs.data.*.upload.confirm"],
-    "request_reply": ["polylabs.data.*.download"]
+    "subscribes": ["polyqlabs.data.*.upload"],
+    "emits": ["lex://estream/apps/polyqlabs.data/telemetry", "polyqlabs.data.*.upload.confirm"],
+    "request_reply": ["polyqlabs.data.*.download"]
   }
 }
 ```
@@ -521,7 +521,7 @@ Edge nodes use this to enforce topic-level ACLs without application code.
 
 ### Proposal 8: `@offline` — Offline Capability Declaration
 
-**Problem**: Some circuits must work without wire connectivity (Poly Data offline access, Poly Messenger queued messages, Poly Pass local vault). Today, offline support is ad-hoc — developers manually implement ESLite caching, queue management, and sync-on-reconnect. The circuit definition doesn't express offline capability, so the build pipeline can't include necessary infrastructure.
+**Problem**: Some circuits must work without wire connectivity (Poly Data offline access, Q Messenger queued messages, Q Pass local vault). Today, offline support is ad-hoc — developers manually implement ESLite caching, queue management, and sync-on-reconnect. The circuit definition doesn't express offline capability, so the build pipeline can't include necessary infrastructure.
 
 **Proposed**:
 ```yaml
@@ -551,7 +551,7 @@ pub fn emit_or_queue(ctx: &mut Context, topic: &str, payload: &[u8]) -> Result<(
         ctx.wire.emit(topic, payload)
     } else {
         // Queue to ESLite for replay on reconnect
-        ctx.eslite.insert("/polykit/offline_queue", &QueueEntry {
+        ctx.eslite.insert("/qkit/offline_queue", &QueueEntry {
             topic: topic.to_string(),
             payload: payload.to_vec(),
             queued_at: ctx.time(),
@@ -567,13 +567,13 @@ pub fn emit_or_queue(ctx: &mut Context, topic: &str, payload: &[u8]) -> Result<(
 
 // AUTO-GENERATED: sync-on-reconnect handler
 pub fn on_reconnect(ctx: &mut Context) -> Result<()> {
-    let entries = ctx.eslite.query("/polykit/offline_queue")
+    let entries = ctx.eslite.query("/qkit/offline_queue")
         .order_by("sequence", Asc)
         .execute()?;
     
     for entry in entries.rows {
         ctx.wire.emit(&entry.topic, &entry.payload)?;
-        ctx.eslite.delete("/polykit/offline_queue", &entry.key)?;
+        ctx.eslite.delete("/qkit/offline_queue", &entry.key)?;
     }
     Ok(())
 }
@@ -696,7 +696,7 @@ codegen:
 
 Output structure:
 ```
-circuits/polykit-metering/
+circuits/qkit-metering/
 ├── circuit.flir.yaml
 ├── generated/
 │   ├── types.rs          # Rust types (for WASM compilation)
@@ -801,18 +801,18 @@ The two patterns chain in the FPGA pipeline: Delta Curate encodes (~20x), then C
 - Encoder: ~800 LUTs, 2 BRAMs, 4-5 cycles/record @ 200 MHz (40-50M records/sec)
 - Fits alongside baseline-gate on eStream eFPGA
 
-### Relevance to PolyKit
+### Relevance to QKit
 
-Delta Curate would benefit Poly Data (document version tracking), Poly Messenger (message delivery telemetry), and any future Poly Labs product handling time series or audit trail data. The encoding/decoding could be exposed via PolyKit crates and the `@delta_curate` FLIR annotation.
+Delta Curate would benefit Poly Data (document version tracking), Q Messenger (message delivery telemetry), and any future PolyQ Labs product handling time series or audit trail data. The encoding/decoding could be exposed via QKit crates and the `@delta_curate` FLIR annotation.
 
 ---
 
 ## Codegen Quality Observations
 
-*To be filled in once FLIR → Rust codegen is exercised against PolyKit circuits.*
+*To be filled in once FLIR → Rust codegen is exercised against QKit circuits.*
 
 ---
 
 ## Testing Observations
 
-*To be filled in once ESF/ESZ test vectors are generated for PolyKit circuits.*
+*To be filled in once ESF/ESZ test vectors are generated for QKit circuits.*

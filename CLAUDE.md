@@ -1,12 +1,12 @@
-# PolyKit
+# QKit
 
-**GitHub**: [polylabs-dev/polykit](https://github.com/polylabs-dev/polykit)
+**GitHub**: [polylabs-dev/qkit](https://github.com/polylabs-dev/qkit)
 **Platform**: eStream v0.22.0
 **Architecture**: 100% FastLang, FLIR codegen pipeline
 
 ## What This Is
 
-PolyKit is the shared framework for all Poly Labs apps (Poly Files, Poly Messenger, Poly Mail, Poly VPN, Poly Pass, Poly OAuth, Poly Mind, Poly Git). It provides the common infrastructure every app needs — identity, crypto, metering, classification, ESLite, console widgets, sanitization — as FastLang circuits compiled via the FLIR codegen pipeline (FL → FLIR → Rust/WASM).
+QKit is the shared framework for all PolyQ Labs apps (Q Files, Q Messenger, Q Mail, Q VPN, Q Pass, Q OAuth, Q Mind, Q Git). It provides the common infrastructure every app needs — identity, crypto, metering, classification, ESLite, console widgets, sanitization — as FastLang circuits compiled via the FLIR codegen pipeline (FL → FLIR → Rust/WASM).
 
 ## Key Design Principle
 
@@ -23,17 +23,17 @@ PolyKit is the shared framework for all Poly Labs apps (Poly Files, Poly Messeng
 ## Structure
 
 ```
-polykit/
+qkit/
 ├── circuits/                FLIR circuit definitions (the real code)
 │   ├── fl/                  FastLang source (.fl files)
 │   └── ...
 ├── crates/                  Legacy Rust (being slimmed to near-zero via FL codegen)
-│   ├── polykit-core/        Identity, PQ crypto, metering, classification
-│   ├── polykit-eslite/      ESLite migrations, queries, sync
-│   ├── polykit-console/     Widget data pipeline, event bus, RBAC, demo
-│   ├── polykit-sanitize/    3-stage PII/PCI/HIPAA/GDPR pipeline
-│   └── polykit-wasm/        WASM entry point (wasm-bindgen exports)
-├── packages/react/          @polykit/react — thin TS DOM binding
+│   ├── qkit-core/        Identity, PQ crypto, metering, classification
+│   ├── qkit-eslite/      ESLite migrations, queries, sync
+│   ├── qkit-console/     Widget data pipeline, event bus, RBAC, demo
+│   ├── qkit-sanitize/    3-stage PII/PCI/HIPAA/GDPR pipeline
+│   └── qkit-wasm/        WASM entry point (wasm-bindgen exports)
+├── packages/react/          @qkit/react — thin TS DOM binding
 ├── templates/               App scaffolding
 └── docs/                    Architecture, getting started
 ```

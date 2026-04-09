@@ -1,16 +1,16 @@
-# PolyKit FastLang Refactor
+# QKit FastLang Refactor
 
 > **Status**: In Progress
 > **Priority**: P1
 > **Estimated Effort**: ~2-3 weeks (4 phases)
-> **Target**: PolyKit v0.2.0 on eStream SDK v0.8.3
+> **Target**: QKit v0.2.0 on eStream SDK v0.8.3
 > **Depends On**: [EPIC_FASTLANG_V083_RELEASE](https://github.com/polyquantum/estream-io/blob/main/.github/epics/EPIC_FASTLANG_V083_RELEASE.md), [EPIC_FASTLANG_NATIVE_TRANSITION](https://github.com/polyquantum/estream-io/blob/main/.github/epics/EPIC_FASTLANG_NATIVE_TRANSITION.md)
 
 ---
 
 ## Overview
 
-Migrate PolyKit from FLIR YAML circuit definitions (v0.8.1) to FastLang `.fl` source files (v0.8.3). FastLang becomes the single source of truth -- generating Rust, WASM, and TypeScript bindings from `.fl` files. The separate telemetry circuit is eliminated; StreamSight is woven inline via annotations on every circuit.
+Migrate QKit from FLIR YAML circuit definitions (v0.8.1) to FastLang `.fl` source files (v0.8.3). FastLang becomes the single source of truth -- generating Rust, WASM, and TypeScript bindings from `.fl` files. The separate telemetry circuit is eliminated; StreamSight is woven inline via annotations on every circuit.
 
 ### Prior State
 
@@ -18,8 +18,8 @@ Migrate PolyKit from FLIR YAML circuit definitions (v0.8.1) to FastLang `.fl` so
 |------|--------|
 | 6 FLIR YAML circuit definitions | Current (v0.8.1) |
 | 5 hand-written Rust crates (~2,500 lines) | Current |
-| 4 FastLang polylabs examples in estream-io | Reference only |
-| polykit-telemetry as separate circuit | Current (to be eliminated) |
+| 4 FastLang polyqlabs examples in estream-io | Reference only |
+| qkit-telemetry as separate circuit | Current (to be eliminated) |
 
 ### Success Metrics
 
@@ -40,7 +40,7 @@ Migrate PolyKit from FLIR YAML circuit definitions (v0.8.1) to FastLang `.fl` so
 - [x] Design document (`docs/FASTLANG_REFACTOR_PLAN.md`)
 - [x] Epic created (`.github/epics/EPIC_POLYKIT_FASTLANG_REFACTOR.md`)
 - [x] `circuits/fl/` directory created
-- [ ] Shared annotation profile (`polykit_profile.fl`)
+- [ ] Shared annotation profile (`qkit_profile.fl`)
 
 ### Exit Criteria
 
@@ -53,26 +53,26 @@ Migrate PolyKit from FLIR YAML circuit definitions (v0.8.1) to FastLang `.fl` so
 
 Convert 5 FLIR YAML circuits to FastLang. The 6th (telemetry) is eliminated -- its functionality is distributed as inline annotations across all circuits.
 
-- [ ] `polykit_identity.fl` -- SPARK auth, HKDF, ML-DSA-87, ML-KEM-1024
-  - Replaces: `circuits/polykit-identity/circuit.flir.yaml` + `crates/polykit-core/src/identity.rs` + `crates/polykit-core/src/crypto.rs`
+- [ ] `qkit_identity.fl` -- SPARK auth, HKDF, ML-DSA-87, ML-KEM-1024
+  - Replaces: `circuits/qkit-identity/circuit.flir.yaml` + `crates/qkit-core/src/identity.rs` + `crates/qkit-core/src/crypto.rs`
   - Features: `constant_time`, `kat_vector`, `invariant`, `observe metrics`, `monitor`
-- [ ] `polykit_metering.fl` -- 8-dimension resource metering
-  - Replaces: `circuits/polykit-metering/circuit.flir.yaml` + `crates/polykit-core/src/metering.rs`
+- [ ] `qkit_metering.fl` -- 8-dimension resource metering
+  - Replaces: `circuits/qkit-metering/circuit.flir.yaml` + `crates/qkit-core/src/metering.rs`
   - Features: `stream` + `emit`, `parallel for`, `meters`, `observe metrics`
-- [ ] `polykit_rate_limiter.fl` -- Rate limiter with FSM
-  - Replaces: `circuits/polykit-rate-limiter/circuit.flir.yaml`
+- [ ] `qkit_rate_limiter.fl` -- Rate limiter with FSM
+  - Replaces: `circuits/qkit-rate-limiter/circuit.flir.yaml`
   - Features: `state_machine`, `streamsight_anomaly()` body calls, `observe metrics`, `monitor`
-- [ ] `polykit_sanitize.fl` -- 3-stage compliance pipeline
-  - Replaces: `circuits/polykit-sanitize/circuit.flir.yaml` + `crates/polykit-sanitize/`
+- [ ] `qkit_sanitize.fl` -- 3-stage compliance pipeline
+  - Replaces: `circuits/qkit-sanitize/circuit.flir.yaml` + `crates/qkit-sanitize/`
   - Features: `@sanitize`, `li_classify`, `witness full`, `esz_emit`, `li_feed`, `observe metrics`, `monitor`
-- [ ] `polykit_li_effects.fl` -- LI Effects classification + human-in-loop
-  - Replaces: `circuits/polykit-eslm-classify/circuit.flir.yaml` (ESLM renamed to LI Effects)
+- [ ] `qkit_li_effects.fl` -- LI Effects classification + human-in-loop
+  - Replaces: `circuits/qkit-eslm-classify/circuit.flir.yaml` (ESLM renamed to LI Effects)
   - Features: `feedback` streams, `li_embed`/`li_classify`/`li_infer`, `stream` + `emit`, `observe metrics`
 
 ### Exit Criteria
 
 - All 5 `.fl` files compile with `estream codegen compile`
-- `cargo test -p estream-fastlang -- polykit` passes
+- `cargo test -p estream-fastlang -- qkit` passes
 - StreamSight annotations present on every circuit
 
 ---
@@ -81,26 +81,26 @@ Convert 5 FLIR YAML circuits to FastLang. The 6th (telemetry) is eliminated -- i
 
 Circuits that leverage constructs only available in FastLang (not expressible in YAML).
 
-- [ ] `polykit_delta_curate.fl` -- Field-level delta encoding with bitmask proofs
+- [ ] `qkit_delta_curate.fl` -- Field-level delta encoding with bitmask proofs
   - Features: `delta_curate` annotation, `invariant "lossless"`, `observe metrics`
-- [ ] `polykit_governance.fl` -- Field governance with filtered fan-out + regional fan-in
+- [ ] `qkit_governance.fl` -- Field governance with filtered fan-out + regional fan-in
   - Features: `audience` declarations, `field_governance` blocks, `sub_lex fan_out share/redact`, `sub_lex region_us fan_in`, `sub_lex region_eu fan_in`
-- [ ] `polykit_regional_us.fl` -- US sovereignty and CCPA/SOC2 compliance
+- [ ] `qkit_regional_us.fl` -- US sovereignty and CCPA/SOC2 compliance
   - Features: `sovereignty us`, `data_residency us`, `compliance [ccpa, soc2, coppa]`, `sub_lex app fan_in`, `sub_lex global fan_out` with share/redact
-- [ ] `polykit_regional_eu.fl` -- EU sovereignty and GDPR/EU AI Act compliance
+- [ ] `qkit_regional_eu.fl` -- EU sovereignty and GDPR/EU AI Act compliance
   - Features: `sovereignty eu`, `data_residency eu_only`, `compliance [gdpr, eu_ai_act]`, GDPR `field_governance` tiers, `sub_lex personal/pseudonymized/anonymous fan_out`
-- [ ] `polykit_platform.fl` -- Platform composition connecting all circuits
+- [ ] `qkit_platform.fl` -- Platform composition connecting all circuits
   - Features: `platform`, `import`, `group`, `connect`, `bind`, `streamsight true`, `esz_emit`, `li_feed`
   - Groups: `core`, `compliance`, `intelligence`, `regional`, `apps`
 
 ### Phase 3b: App-Level Circuits (`circuits/fl/apps/`)
 
-Adapted from estream-io polylabs examples with PolyKit profiles and metering:
+Adapted from estream-io polyqlabs examples with QKit profiles and metering:
 
-- [ ] `polykit_media_stream.fl` -- PQ-encrypted voice/video SFU
-- [ ] `polykit_crdt_sync.fl` -- Offline-capable CRDT merge
-- [ ] `polykit_blind_relay.fl` -- Privacy-preserving message relay with cover traffic
-- [ ] `polykit_classified_fusion.fl` -- SCI omniscient fusion with 4-tier fan_in
+- [ ] `qkit_media_stream.fl` -- PQ-encrypted voice/video SFU
+- [ ] `qkit_crdt_sync.fl` -- Offline-capable CRDT merge
+- [ ] `qkit_blind_relay.fl` -- Privacy-preserving message relay with cover traffic
+- [ ] `qkit_classified_fusion.fl` -- SCI omniscient fusion with 4-tier fan_in
 
 ### Exit Criteria
 
@@ -113,8 +113,8 @@ Adapted from estream-io polylabs examples with PolyKit profiles and metering:
 
 ## Phase 4: Crate Slimming, Archive & Docs
 
-- [ ] Slim `polykit-core` -- remove identity/crypto/metering code replaced by codegen
-- [ ] Slim `polykit-wasm` -- reduce to thin shim over codegen'd circuit exports
+- [ ] Slim `qkit-core` -- remove identity/crypto/metering code replaced by codegen
+- [ ] Slim `qkit-wasm` -- reduce to thin shim over codegen'd circuit exports
 - [ ] Archive YAML -- move `circuits/*.flir.yaml` to `circuits/legacy/`
 - [ ] Update `ARCHITECTURE.md` -- reflect FastLang-native pipeline
 - [ ] Update `ESTREAM_GETTING_STARTED.md` -- new build commands, circuit catalog, migration guide

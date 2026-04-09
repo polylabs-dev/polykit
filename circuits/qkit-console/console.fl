@@ -1,0 +1,275 @@
+/// qkit-console.fl — Widget data pipeline, event bus, RBAC
+/// lex qkit/console
+/// Epic: polylabs-dev/qkit#11, Issue: #18
+///
+/// Shared console infrastructure for all PolyQ Labs apps.
+/// All data processing runs in WASM — TS receives render-ready payloads.
+/// Typed event bus for cross-widget coordination.
+/// RBAC for widget visibility.
+
+component qkit_console version "0.2.0" {
+    export check_access, format_role, process_widgets, emit_widget_event
+}
+
+profile console_defaults {
+    lex qkit/console
+    @precision C
+}
+
+// ── Data Types ──────────────────────────────────────────────────────────────
+
+type StandardRole = enum {
+    Viewer,
+    Operator,
+    Compliance,
+}
+
+type PolykitEvent = enum {
+    DeviationSelect,
+    ClassificationFilter,
+    TimeRange,
+    FilterReset,
+    InvestigateMetric,
+    ReviewCompleted,
+}
+
+type ReviewAction = enum {
+    Accept,
+    Override,
+    Flag,
+}
+
+data WidgetPayload : console v1 {
+    widget_id: bytes(64),
+    widget_type: bytes(32),
+    data_json: bytes(65536),
+    dirty: bool,
+    timestamp_ms: u64,
+}
+    encode
+    @observe metrics [widget_type, dirty] level adaptive
+
+data WidgetEvent : console v1 {
+    event_type: u8,
+    payload: bytes(4096),
+    source_widget: bytes(64),
+    timestamp_ms: u64,
+}
+    encode
+
+data AccessCheck : console v1 {
+    allowed: bool,
+    user_roles: bytes(256),
+    required_roles: bytes(256),
+}
+    encode
+
+// ── Widget Registry Graph ───────────────────────────────────────────────────
+
+graph widget_registry {
+    node Widget          : WidgetPayload
+    node StreamSource    : StreamSourceInfo
+    node EventHandler    : EventHandlerInfo
+
+    edge subscribes_to   : Widget -> StreamSource
+    edge handles_event   : Widget -> EventHandler
+    edge publishes_to    : Widget -> Widget
+
+    overlay render_count on Widget { total_renders, avg_render_ms }
+    overlay data_freshness on Widget { last_update_ms, staleness_ms }
+
+    storage csr {
+        tier bram  { capacity: 50 }
+        tier ddr   { capacity: 500 }
+    }
+
+    @observe widget_registry: [render_count, data_freshness] threshold: {
+        anomaly_score 0.8
+        baseline_window 100
+    }
+}
+
+data StreamSourceInfo : console v1 {
+    topic: bytes(256),
+    pattern: bytes(32),
+}
+    encode
+
+data EventHandlerInfo : console v1 {
+    event_types: bytes(128),
+    handler_id: bytes(64),
+}
+    encode
+
+// ── Circuits ────────────────────────────────────────────────────────────────
+
+/// Check if a user's roles satisfy a widget's required roles.
+circuit check_access(
+    user_roles: list<bytes(32)>,
+    required_roles: list<bytes(32)>
+) -> bool
+    @console_defaults
+    @precision A
+    @observe metrics: [access_checks, access_denials]
+    test golden {
+        input { user_roles: ["poly-git-writer", "poly-git-reader"], required_roles: ["poly-git-reader"] }
+        assert { result == true }
+    }
+    test golden {
+        input { user_roles: ["poly-git-reader"], required_roles: ["poly-git-admin"] }
+        assert { result == false }
+    }
+{
+    if len(required_roles) == 0 {
+        true
+    } else {
+        let found = false
+        for req in required_roles {
+            for user_role in user_roles {
+                if user_role == req {
+                    found = true
+                }
+            }
+        }
+        found
+    }
+}
+
+/// Format a role name with app prefix.
+/// e.g., ("poly-git", Viewer) -> "poly-git-viewer"
+circuit format_role(
+    app: bytes(32),
+    role: u8
+) -> bytes(64)
+    @console_defaults
+    test golden {
+        input { app: "poly-git", role: 0 }
+        assert { result == "poly-git-viewer" }
+    }
+{
+    let suffix = match role {
+        0 => "viewer",
+        1 => "operator",
+        2 => "compliance",
+        _ => "unknown",
+    }
+    concat(app, "-", suffix)
+}
+
+/// Process all registered widgets with current stream data and events.
+circuit process_widgets(
+    stream_data: bytes(65536),
+    events: list<WidgetEvent>
+) -> list<WidgetPayload>
+    @console_defaults
+    @observe metrics: [widgets_processed, events_drained]
+{
+    let widgets = graph_query(widget_registry, "all")
+    let results = []
+    for widget in widgets {
+        let payload = process_single_widget(widget, stream_data, events)
+        results = append(results, payload)
+    }
+    results
+}
+
+circuit process_single_widget(
+    widget: WidgetPayload,
+    stream_data: bytes(65536),
+    events: list<WidgetEvent>
+) -> WidgetPayload
+    lex qkit/console
+    @precision C
+{
+    let relevant_events = filter_events(events, widget.widget_id)
+    let updated_data = apply_events(widget.data_json, relevant_events)
+    WidgetPayload {
+        widget_id: widget.widget_id,
+        widget_type: widget.widget_type,
+        data_json: merge_stream_data(updated_data, stream_data),
+        dirty: len(relevant_events) > 0,
+        timestamp_ms: current_time_ms(),
+    }
+}
+
+/// Emit a cross-widget event to the event bus.
+circuit emit_widget_event(
+    event_type: u8,
+    payload: bytes(4096),
+    source_widget: bytes(64)
+) -> WidgetEvent
+    @console_defaults
+    @observe metrics: [events_emitted]
+{
+    WidgetEvent {
+        event_type: event_type,
+        payload: payload,
+        source_widget: source_widget,
+        timestamp_ms: current_time_ms(),
+    }
+}
+
+// ── Internal helpers ────────────────────────────────────────────────────────
+
+circuit filter_events(events: list<WidgetEvent>, widget_id: bytes(64)) -> list<WidgetEvent>
+    lex qkit/console
+    @precision C
+{
+    let filtered = []
+    for e in events {
+        if e.source_widget != widget_id {
+            filtered = append(filtered, e)
+        }
+    }
+    filtered
+}
+
+circuit apply_events(data: bytes(65536), events: list<WidgetEvent>) -> bytes(65536)
+    lex qkit/console
+    @precision C
+{
+    data
+}
+
+circuit merge_stream_data(widget_data: bytes(65536), stream_data: bytes(65536)) -> bytes(65536)
+    lex qkit/console
+    @precision C
+{
+    widget_data
+}
+
+// ── Streams ─────────────────────────────────────────────────────────────────
+
+stream widget_events {
+    topic "lex://estream/apps/{app_namespace}/console/events"
+    payload WidgetEvent
+    retention 1d
+    consumers [console]
+}
+
+stream widget_metrics {
+    topic "lex://estream/apps/{app_namespace}/console/metrics"
+    retention 30d
+    consumers [observe, console]
+
+    event widget_rendered {
+        widget_id: bytes(64),
+        render_ms: u64,
+        dirty: bool,
+    }
+}
+
+// ── Journey Tests ───────────────────────────────────────────────────────────
+
+journey console_rbac_flow {
+    party admin
+    party viewer
+
+    step admin check_admin = check_access(["poly-git-admin"], ["poly-git-admin"])
+    step viewer check_viewer = check_access(["poly-git-reader"], ["poly-git-admin"])
+    step admin role = format_role("poly-git", 0)
+
+    invariant "admin_allowed" { admin.check_admin == true }
+    invariant "viewer_denied" { viewer.check_viewer == false }
+    invariant "role_formatted" { admin.role == "poly-git-viewer" }
+}

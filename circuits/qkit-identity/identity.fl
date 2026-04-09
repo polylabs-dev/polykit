@@ -1,0 +1,328 @@
+/// qkit-identity.fl — SPARK identity + PQ cryptographic primitives
+/// lex qkit/identity
+/// Epic: polylabs-dev/qkit#11, Issue: #12
+///
+/// Provides per-app HKDF key derivation from SPARK master seed,
+/// ML-DSA-87 signing/verification, ML-KEM-1024 encapsulation,
+/// and the SPARK authentication handshake state machine.
+///
+/// Key hierarchy:
+///   SPARK master_seed
+///     └── HKDF-SHA3-256(master_seed, "{app-context}")
+///           ├── ML-DSA-87 signing key pair (FIPS 204, Level 5)
+///           └── ML-KEM-1024 encryption key pair (FIPS 203, Level 5)
+
+component qkit_identity version "0.2.0" {
+    export derive_keys, derive_user_id, sign_message, verify_signature,
+           encapsulate_key, decapsulate_key, create_app_context,
+           format_user_topic, format_global_topic
+}
+
+profile identity_defaults {
+    lex qkit/identity
+    @precision A
+    constant_time true
+}
+
+// ── Data Types ──────────────────────────────────────────────────────────────
+
+data AppContext : identity v1 {
+    app_id: bytes(64),
+    hkdf_context: bytes(64),
+    lex_namespace: bytes(128),
+}
+    encode
+
+data DerivedKeys : identity v1 {
+    user_id: bytes(16),
+    signing_public_key: bytes(2592),
+    signing_secret_key: bytes(4896),
+    encryption_public_key: bytes(1568),
+    encryption_secret_key: bytes(3168),
+}
+    encode
+    sign {
+        algorithm ml_dsa_87
+        fields [user_id, signing_public_key, encryption_public_key]
+    }
+    govern {
+        signing_secret_key -> encrypted(owner)
+        encryption_secret_key -> encrypted(owner)
+    }
+
+data Signature : identity v1 {
+    signer_id: bytes(16),
+    signature_bytes: bytes(4627),
+    public_key: bytes(2592),
+    timestamp: u64,
+}
+    encode
+    sign {
+        algorithm ml_dsa_87
+        fields [signer_id, signature_bytes]
+    }
+
+data EncapsulatedKey : identity v1 {
+    ciphertext: bytes(1568),
+    shared_secret: bytes(32),
+}
+    encode
+    encrypt {
+        algorithm ml_kem_1024
+    }
+
+data EncryptedPayload : identity v1 {
+    ciphertext: bytes(65536),
+    nonce: bytes(12),
+    tag: bytes(16),
+}
+    encode
+
+type AuthResult = enum {
+    Authenticated,
+    Rejected,
+    Expired,
+}
+
+// ── SPARK Authentication Handshake FSM ──────────────────────────────────────
+
+state_machine spark_auth_handshake {
+    initial ChallengeRequest
+    persistence memory
+    rollback_on_failure false
+    history_limit 1000
+    terminal [Authenticated, Rejected]
+
+    ChallengeRequest { timeout 5s -> Rejected }
+    ChallengeReceived { timeout 5s -> Rejected }
+    AuthSent { timeout 10s -> Rejected }
+
+    ChallengeRequest -> ChallengeReceived when challenge_received
+    ChallengeReceived -> AuthSent when auth_response_signed
+        guard signature_valid_guard(challenge, signing_key)
+    AuthSent -> Authenticated when session_granted
+    AuthSent -> Rejected when auth_denied
+}
+
+// ── Circuits ────────────────────────────────────────────────────────────────
+
+circuit create_app_context(
+    app_id: bytes(64),
+    hkdf_context: bytes(64),
+    lex_namespace: bytes(128)
+) -> AppContext
+    @identity_defaults
+    @observe metrics: [app_contexts_created]
+    test golden {
+        input { app_id: "polydata", hkdf_context: "q-data-v1", lex_namespace: "polyqlabs.data" }
+        expect { app_id: "polydata" }
+    }
+{
+    AppContext {
+        app_id: app_id,
+        hkdf_context: hkdf_context,
+        lex_namespace: lex_namespace,
+    }
+}
+
+/// Derive signing + encryption keys from SPARK master seed.
+/// Master seed never leaves the WASM boundary.
+circuit derive_keys(
+    master_seed: bytes(32),
+    hkdf_context: bytes(64)
+) -> DerivedKeys
+    @identity_defaults
+    @guard(block_on: seed_invalid)
+    @observe metrics: [key_derivations_total]
+    invariant "seed_length" { master_seed.len >= 32 }
+    test golden {
+        input { master_seed: bytes(32), hkdf_context: "q-data-v1" }
+        assert { result.user_id.len == 16 }
+        assert { result.signing_public_key.len == 2592 }
+        assert { result.encryption_public_key.len == 1568 }
+    }
+    test property {
+        forall seed: bytes(32), ctx: bytes(64) =>
+            derive_keys(seed, ctx).user_id.len == 16
+    }
+{
+    let derived_material = hkdf_sha3_256(master_seed, hkdf_context, 64)
+    let signing_seed = derived_material[0..32]
+    let encryption_seed = derived_material[32..64]
+
+    let (signing_pk, signing_sk) = mldsa_keygen(signing_seed)
+    let (encryption_pk, encryption_sk) = mlkem_keygen(encryption_seed)
+
+    let pk_hash = sha3_256(signing_pk)
+    let user_id = pk_hash[0..16]
+
+    DerivedKeys {
+        user_id: user_id,
+        signing_public_key: signing_pk,
+        signing_secret_key: signing_sk,
+        encryption_public_key: encryption_pk,
+        encryption_secret_key: encryption_sk,
+    }
+}
+
+/// Compute user_id from ML-DSA-87 public key: SHA3-256(pk)[0..16]
+circuit derive_user_id(
+    signing_public_key: bytes(2592)
+) -> bytes(16)
+    @identity_defaults
+    @observe metrics: [user_id_derivations]
+    test golden {
+        input { signing_public_key: bytes(2592) }
+        assert { result.len == 16 }
+    }
+{
+    let pk_hash = sha3_256(signing_public_key)
+    pk_hash[0..16]
+}
+
+/// Sign data with ML-DSA-87 (FIPS 204, Level 5)
+circuit sign_message(
+    secret_key: bytes(4896),
+    message: bytes(65536)
+) -> bytes(4627)
+    @identity_defaults
+    @observe metrics: [signatures_created]
+    test golden {
+        input { secret_key: bytes(4896), message: "test" }
+        assert { result.len == 4627 }
+    }
+{
+    mldsa_sign(message, secret_key)
+}
+
+/// Verify ML-DSA-87 signature
+circuit verify_signature(
+    public_key: bytes(2592),
+    message: bytes(65536),
+    signature: bytes(4627)
+) -> bool
+    @identity_defaults
+    @observe metrics: [signature_verifications, signature_failures]
+    test golden {
+        input { public_key: bytes(2592), message: "test", signature: bytes(4627) }
+    }
+{
+    mldsa_verify(message, signature, public_key)
+}
+
+/// ML-KEM-1024 key encapsulation (FIPS 203, Level 5)
+circuit encapsulate_key(
+    recipient_public_key: bytes(1568)
+) -> EncapsulatedKey
+    @identity_defaults
+    @observe metrics: [encapsulations_total]
+    test golden {
+        input { recipient_public_key: bytes(1568) }
+        assert { result.shared_secret.len == 32 }
+    }
+{
+    let (ct, ss) = mlkem_encaps(recipient_public_key)
+    EncapsulatedKey {
+        ciphertext: ct,
+        shared_secret: ss,
+    }
+}
+
+/// ML-KEM-1024 key decapsulation
+circuit decapsulate_key(
+    secret_key: bytes(3168),
+    ciphertext: bytes(1568)
+) -> bytes(32)
+    @identity_defaults
+    @observe metrics: [decapsulations_total]
+    test golden {
+        input { secret_key: bytes(3168), ciphertext: bytes(1568) }
+        assert { result.len == 32 }
+    }
+{
+    mlkem_decaps(secret_key, ciphertext)
+}
+
+/// Guard circuit for SPARK auth: verify challenge signature is valid
+circuit signature_valid_guard(
+    challenge: bytes(32),
+    signing_key: bytes(4896)
+) -> bool
+    @identity_defaults
+{
+    let sig = mldsa_sign(challenge, signing_key)
+    let (pk, _) = mldsa_keygen(signing_key[0..32])
+    mldsa_verify(challenge, sig, pk)
+}
+
+// ── Topic Formatting ────────────────────────────────────────────────────────
+
+circuit format_user_topic(
+    lex_namespace: bytes(128),
+    user_id: bytes(16),
+    suffix: bytes(128)
+) -> bytes(384)
+    lex qkit/identity
+    @precision C
+{
+    concat(lex_namespace, ".", hex(user_id), ".", suffix)
+}
+
+circuit format_global_topic(
+    lex_namespace: bytes(128),
+    suffix: bytes(128)
+) -> bytes(384)
+    lex qkit/identity
+    @precision C
+{
+    concat("lex://estream/apps/", lex_namespace, "/", suffix)
+}
+
+// ── Streams ─────────────────────────────────────────────────────────────────
+
+stream identity_events {
+    topic "lex://estream/apps/{app_namespace}/identity"
+    retention 365d
+    consumers [audit, console]
+
+    event keys_derived {
+        user_id: bytes(16),
+        app_id: bytes(64),
+        timestamp: u64,
+    }
+    event auth_completed {
+        user_id: bytes(16),
+        result: u8,
+        duration_ms: u64,
+    }
+    event auth_failed {
+        challenge_hash: bytes(32),
+        reason: bytes(128),
+        timestamp: u64,
+    }
+}
+
+// ── Journey Tests ───────────────────────────────────────────────────────────
+
+journey spark_identity_flow {
+    party alice
+
+    step alice derives = derive_keys(bytes(32), "q-git-v1")
+    step alice user = derive_user_id(alice.derives.signing_public_key)
+    step alice signs = sign_message(alice.derives.signing_secret_key, "hello world")
+    step alice verifies = verify_signature(alice.derives.signing_public_key, "hello world", alice.signs)
+
+    invariant "roundtrip_verify" { alice.verifies == true }
+    invariant "user_id_consistent" { alice.user == alice.derives.user_id }
+}
+
+journey kem_encapsulation_flow {
+    party alice
+    party bob
+
+    step alice keys = derive_keys(bytes(32), "alice-v1")
+    step bob encaps = encapsulate_key(alice.keys.encryption_public_key)
+    step alice decaps = decapsulate_key(alice.keys.encryption_secret_key, bob.encaps.ciphertext)
+
+    invariant "shared_secret_match" { alice.decaps == bob.encaps.shared_secret }
+}

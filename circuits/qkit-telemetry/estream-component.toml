@@ -1,0 +1,40 @@
+[component]
+name = "qkit-telemetry"
+version = "0.2.0"
+category = "smart-circuit"
+implementation_type = "FastLang"
+status = "Published"
+description = "StreamSight telemetry pipeline: Discard Normal architecture, baseline comparison, anomaly detection, Cortex integration"
+license = "Apache-2.0"
+repository = "https://github.com/polylabs-dev/qkit"
+keywords = ["telemetry", "streamsight", "observability", "anomaly-detection", "baseline"]
+
+[component.author]
+name = "PolyQ Labs"
+email = "engineering@polyqlabs.dev"
+url = "https://polyqlabs.dev"
+
+[component.marketplace]
+pricing = "free"
+visibility = "open"
+
+[component.estream]
+min_version = "0.12.0"
+
+[component.dependencies]
+
+[component.schemas]
+provides = ["TelemetryEvent", "Deviation", "BaselineCheck"]
+requires = []
+
+[component.circuits]
+provides = ["emit_gauge", "emit_counter", "emit_event", "check_baseline"]
+target = ["cpu"]
+
+[component.lifecycle]
+status = "active"
+breaking_change_notice_days = 90
+changelog = "CHANGELOG.md"
+
+[component.include]
+circuits = ["telemetry.fl"]

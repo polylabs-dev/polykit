@@ -1,7 +1,7 @@
 {
-  "name": "@polykit/react",
+  "name": "@qkit/react",
   "version": "0.1.0",
-  "description": "Thin DOM binding layer for PolyKit WASM — hooks and components only",
+  "description": "Thin DOM binding layer for QKit WASM — hooks and components only",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

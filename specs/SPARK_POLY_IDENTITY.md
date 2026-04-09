@@ -33,7 +33,7 @@
 │     ┌─────────────────────────────────────────────────────────────────┐ │
 │     │                                                                  │ │
 │     │  estream_keys = HKDF(master_seed, "estream-console-v1")         │ │
-│     │  poly_keys    = HKDF(master_seed, "poly-messenger-v1")          │ │
+│     │  poly_keys    = HKDF(master_seed, "q-messenger-v1")          │ │
 │     │  taketitle_keys = HKDF(master_seed, "io.taketitle-v1")          │ │
 │     │                                                                  │ │
 │     │  Same Spark → Same keys across sessions                         │ │
@@ -230,7 +230,7 @@ Server verifies signature
 Same master_seed, different keys:
 
 HKDF(seed, "estream-console-v1")  → for eStream
-HKDF(seed, "poly-messenger-v1")   → for Poly
+HKDF(seed, "q-messenger-v1")   → for Poly
 HKDF(seed, "io.taketitle-v1")     → for TakeTitle
 
 Compromise of TakeTitle keys:
@@ -274,13 +274,13 @@ type EstreamPlatformMessage =
 |----------|---------|
 | eStream Console showing eStream messages | Direct Spark-derived Poly identity |
 | TakeTitle showing TakeTitle messages | Blind Connection (TakeTitle doesn't know Poly ID) |
-| Poly Messenger showing all messages | User's primary Poly identity |
+| Q Messenger showing all messages | User's primary Poly identity |
 
 **Why the difference?**
 
 - eStream Console IS the user's eStream identity - no hiding needed
 - TakeTitle is a third party - blind connection protects user's Poly ID
-- Poly Messenger is the unified inbox - sees everything
+- Q Messenger is the unified inbox - sees everything
 
 ---
 
@@ -289,7 +289,7 @@ type EstreamPlatformMessage =
 | Component | Status |
 |-----------|--------|
 | SparkAuth library | 🔄 In progress |
-| WASM key derivation | ✅ In poly-core-wasm |
+| WASM key derivation | ✅ In q-core-wasm |
 | Context isolation | ✅ Designed |
 | PolyInbox component | 📋 Planned |
 | ESLite-wasm storage | ✅ In estream-io |

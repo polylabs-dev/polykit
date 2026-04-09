@@ -1,0 +1,19 @@
+[package]
+name = "qkit-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WASM entry point — wasm-bindgen exports for all qkit crates"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+qkit-core = { workspace = true }
+qkit-eslite = { workspace = true }
+qkit-console = { workspace = true }
+qkit-sanitize = { workspace = true }
+wasm-bindgen = { workspace = true }
+js-sys = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

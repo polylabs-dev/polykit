@@ -1,0 +1,53 @@
+// QKit Portal Composition Layer
+// Composes data room capabilities for Q Portal.
+// Wires: identity (email-based guest) + metering + rate limiting + zero-linkage + room + watermark + analytics
+
+import "qkit_identity.fl" { spark_context, IdentityContext }
+import "qkit_metering.fl" { meter_context, MeterContext }
+import "qkit_rate_limiter.fl" { rate_limit_context, RateLimitContext }
+import "qkit_zero_linkage.fl" { zero_linkage_context, ZeroLinkageContext }
+
+// Portal-specific composition: email-based auth instead of SPARK for guests
+
+schema PortalContext {
+    identity: IdentityContext,
+    metering: MeterContext,
+    rate_limit: RateLimitContext,
+    zero_linkage: ZeroLinkageContext,
+    product_hkdf_context: str,
+    lex_root: str,
+    guest_auth_mode: str,
+    watermark_enabled: bool,
+    analytics_enabled: bool,
+}
+
+circuit qkit_portal_context() -> PortalContext {
+    PortalContext {
+        identity: spark_context("q-portal-v1"),
+        metering: meter_context("q-portal-v1"),
+        rate_limit: rate_limit_context("q-portal-v1"),
+        zero_linkage: zero_linkage_context("q-portal-v1"),
+        product_hkdf_context: "q-portal-v1",
+        lex_root: "esn/global/org/polyqlabs/portal",
+        guest_auth_mode: "email_otp",
+        watermark_enabled: true,
+        analytics_enabled: true,
+    }
+}
+
+// Products that compose qkit_portal:
+//   - Q Portal (primary)
+//   - Any future product needing gated external access with email OTP
+
+test golden "portal_context_uses_email_otp" {
+    input: {}
+    circuit: qkit_portal_context
+    expect: { guest_auth_mode: "email_otp", product_hkdf_context: "q-portal-v1" }
+}
+
+test golden "portal_context_isolated_hkdf" {
+    input: {}
+    circuit: qkit_portal_context
+    assert: result.product_hkdf_context == "q-portal-v1"
+    assert: result.lex_root == "esn/global/org/polyqlabs/portal"
+}

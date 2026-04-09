@@ -1,7 +1,7 @@
 /**
  * React Hooks — thin wrappers over WASM exports
  *
- * These hooks call into polykit.wasm for ALL data operations.
+ * These hooks call into qkit.wasm for ALL data operations.
  * They ONLY handle React state management and DOM lifecycle.
  * Zero business logic, zero crypto, zero data transforms.
  *

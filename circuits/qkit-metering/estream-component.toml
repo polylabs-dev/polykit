@@ -1,0 +1,40 @@
+[component]
+name = "qkit-metering"
+version = "0.2.0"
+category = "smart-circuit"
+implementation_type = "FastLang"
+status = "Published"
+description = "8-dimension resource metering: executions, hashes, bandwidth, storage, observables, proofs, circuits, MPC sessions"
+license = "Apache-2.0"
+repository = "https://github.com/polylabs-dev/qkit"
+keywords = ["metering", "billing", "usage", "rate-limit", "dimensions"]
+
+[component.author]
+name = "PolyQ Labs"
+email = "engineering@polyqlabs.dev"
+url = "https://polyqlabs.dev"
+
+[component.marketplace]
+pricing = "free"
+visibility = "open"
+
+[component.estream]
+min_version = "0.12.0"
+
+[component.dependencies]
+
+[component.schemas]
+provides = ["DimensionValues", "MeteringRecord", "TierLimits", "MeteringDimension"]
+requires = []
+
+[component.circuits]
+provides = ["record_usage", "check_limits", "get_usage_summary", "accumulate"]
+target = ["cpu"]
+
+[component.lifecycle]
+status = "active"
+breaking_change_notice_days = 90
+changelog = "CHANGELOG.md"
+
+[component.include]
+circuits = ["metering.fl"]

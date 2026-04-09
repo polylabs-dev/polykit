@@ -7,9 +7,9 @@
 
 ## Overview
 
-Poly Messenger supports advanced privacy routing capabilities that leverage eStream's Scatter Consensus for enhanced traffic analysis resistance.
+Q Messenger supports advanced privacy routing capabilities that leverage eStream's Scatter Consensus for enhanced traffic analysis resistance.
 
-For implementation details, see the Poly Messenger backend documentation.
+For implementation details, see the Q Messenger backend documentation.
 
 ## Related Specifications
 

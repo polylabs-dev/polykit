@@ -1,18 +1,18 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/polykit-core",
-    "crates/polykit-eslite",
-    "crates/polykit-console",
-    "crates/polykit-graph",
-    "crates/polykit-wasm",
+    "crates/qkit-core",
+    "crates/qkit-eslite",
+    "crates/qkit-console",
+    "crates/qkit-graph",
+    "crates/qkit-wasm",
 ]
 
 [workspace.package]
 version = "0.11.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/polylabs-dev/polykit"
+repository = "https://github.com/polylabs-dev/qkit"
 
 [workspace.dependencies]
 # eStream platform (v0.11.0)
@@ -24,10 +24,10 @@ eslite = { git = "https://github.com/polyquantum/estream", branch = "main" }
 streamsight = { git = "https://github.com/polyquantum/estream", branch = "main" }
 
 # Internal crates
-polykit-core = { path = "crates/polykit-core" }
-polykit-eslite = { path = "crates/polykit-eslite" }
-polykit-console = { path = "crates/polykit-console" }
-polykit-graph = { path = "crates/polykit-graph" }
+qkit-core = { path = "crates/qkit-core" }
+qkit-eslite = { path = "crates/qkit-eslite" }
+qkit-console = { path = "crates/qkit-console" }
+qkit-graph = { path = "crates/qkit-graph" }
 
 # Crypto
 sha3 = "0.10"

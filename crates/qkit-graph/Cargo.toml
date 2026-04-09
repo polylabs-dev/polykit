@@ -1,0 +1,13 @@
+[package]
+name = "qkit-graph"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Graph/DAG runtime helpers for QKit — CSR operations, overlay queries, series access"
+
+[dependencies]
+estream-kernel = { workspace = true }
+estream-flir = { workspace = true }
+serde = { workspace = true }
+bincode = { workspace = true }

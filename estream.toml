@@ -1,8 +1,8 @@
 [package]
-name = "polykit"
+name = "qkit"
 version = "0.11.0"
-description = "Shared SDK for all Poly Labs products — identity, metering, rate limiting, governance, zero-linkage privacy"
-lex = "esn/global/org/polylabs"
+description = "Shared SDK for all PolyQ Labs products — identity, metering, rate limiting, governance, zero-linkage privacy"
+lex = "esn/global/org/polyqlabs"
 
 [platform]
 estream = "0.22.0"
@@ -13,17 +13,17 @@ path = "circuits/fl"
 count = 26
 
 [circuits.groups]
-core = ["polykit_identity", "polykit_metering", "polykit_rate_limiter", "polykit_blind_telemetry"]
-compliance = ["polykit_sanitize", "polykit_governance"]
-intelligence = ["polykit_li_effects", "polykit_delta_curate"]
-regional = ["polykit_regional_us", "polykit_regional_eu"]
-apps = ["polykit_media_stream", "polykit_crdt_sync", "polykit_blind_relay", "polykit_classified_fusion"]
-zero_linkage = ["polykit_zero_linkage", "polykit_blinded_billing", "polykit_bridge"]
-graphs = ["polykit_user_graph", "polykit_metering_graph", "polykit_subscription_lifecycle"]
-cognitive = ["polykit_cognitive", "polykit_noise_filter", "polykit_sme", "polykit_app_graph"]
+core = ["qkit_identity", "qkit_metering", "qkit_rate_limiter", "qkit_blind_telemetry"]
+compliance = ["qkit_sanitize", "qkit_governance"]
+intelligence = ["qkit_li_effects", "qkit_delta_curate"]
+regional = ["qkit_regional_us", "qkit_regional_eu"]
+apps = ["qkit_media_stream", "qkit_crdt_sync", "qkit_blind_relay", "qkit_classified_fusion"]
+zero_linkage = ["qkit_zero_linkage", "qkit_blinded_billing", "qkit_bridge"]
+graphs = ["qkit_user_graph", "qkit_metering_graph", "qkit_subscription_lifecycle"]
+cognitive = ["qkit_cognitive", "qkit_noise_filter", "qkit_sme", "qkit_app_graph"]
 
 [telemetry]
-context = "poly-polykit-telemetry-v1"
+context = "poly-qkit-telemetry-v1"
 blind = true
 cohort_min = 50
 aggregate_window_ms = 3600000
@@ -41,4 +41,4 @@ zero_linkage = true
 
 [deployment]
 node = "alpha-devnet"
-endpoint = "estream://136.113.92.232:5000/polylabs-dev/polykit"
+endpoint = "estream://136.113.92.232:5000/polylabs-dev/qkit"

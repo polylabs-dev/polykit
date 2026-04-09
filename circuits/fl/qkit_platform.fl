@@ -1,0 +1,97 @@
+// QKit Platform Composition
+//
+// Connects all QKit circuits into a unified framework.
+// Apps import this platform to get the full QKit capability set.
+
+platform qkit_framework v1 {
+    import qkit_identity from "./qkit_identity.fl"
+    import qkit_metering from "./qkit_metering.fl"
+    import qkit_rate_limiter from "./qkit_rate_limiter.fl"
+    import qkit_sanitize from "./qkit_sanitize.fl"
+    import qkit_li_effects from "./qkit_li_effects.fl"
+    import qkit_delta_curate from "./qkit_delta_curate.fl"
+    import qkit_governance from "./qkit_governance.fl"
+    import qkit_blind_telemetry from "./qkit_blind_telemetry.fl"
+
+    import qkit_regional_us from "./qkit_regional_us.fl"
+    import qkit_regional_eu from "./qkit_regional_eu.fl"
+
+    import qkit_media_stream from "./apps/qkit_media_stream.fl"
+    import qkit_crdt_sync from "./apps/qkit_crdt_sync.fl"
+    import qkit_blind_relay from "./apps/qkit_blind_relay.fl"
+    import qkit_classified_fusion from "./apps/qkit_classified_fusion.fl"
+
+    import qkit_zero_linkage from "./qkit_zero_linkage.fl"
+    import qkit_blinded_billing from "./qkit_blinded_billing.fl"
+    import qkit_bridge from "./qkit_bridge.fl"
+    import qkit_user_graph from "./qkit_user_graph.fl"
+    import qkit_metering_graph from "./qkit_metering_graph.fl"
+    import qkit_subscription_lifecycle from "./qkit_subscription_lifecycle.fl"
+
+    import qkit_studio_document from "./qkit_studio_document.fl"
+    import qkit_studio_graph from "./qkit_studio_graph.fl"
+    import qkit_media from "./qkit_media.fl"
+    import qkit_compliance from "./qkit_compliance.fl"
+    import qkit_collaboration from "./qkit_collaboration.fl"
+    import qkit_ci from "./qkit_ci.fl"
+    import qkit_wallet from "./qkit_wallet.fl"
+    import qkit_sensor from "./qkit_sensor.fl"
+    import qkit_portal from "./qkit_portal.fl"
+
+    group core [qkit_identity, qkit_metering, qkit_rate_limiter, qkit_blind_telemetry]
+    group compliance [qkit_sanitize, qkit_governance, qkit_compliance]
+    group intelligence [qkit_li_effects, qkit_delta_curate]
+    group regional [qkit_regional_us, qkit_regional_eu]
+    group apps [qkit_media_stream, qkit_crdt_sync, qkit_blind_relay, qkit_classified_fusion]
+    group zero_linkage [qkit_zero_linkage, qkit_blinded_billing, qkit_bridge]
+    group graphs [qkit_user_graph, qkit_metering_graph, qkit_subscription_lifecycle]
+    group studio [qkit_studio_document, qkit_studio_graph, qkit_collaboration]
+    group composition [qkit_media, qkit_ci, qkit_wallet, qkit_sensor, qkit_portal]
+
+    connect qkit_identity -> qkit_metering
+    connect qkit_metering -> qkit_rate_limiter
+    connect qkit_sanitize -> qkit_governance
+    connect qkit_governance -> qkit_regional_us
+    connect qkit_governance -> qkit_regional_eu
+    connect qkit_zero_linkage -> qkit_identity
+    connect qkit_blinded_billing -> qkit_identity
+    connect qkit_bridge -> qkit_identity
+    connect qkit_user_graph -> qkit_metering
+    connect qkit_metering_graph -> qkit_metering
+    connect qkit_subscription_lifecycle -> qkit_metering
+
+    connect qkit_studio_document -> qkit_identity
+    connect qkit_studio_document -> qkit_metering
+    connect qkit_studio_document -> qkit_zero_linkage
+    connect qkit_studio_graph -> qkit_identity
+    connect qkit_studio_graph -> qkit_metering
+    connect qkit_media -> qkit_identity
+    connect qkit_media -> qkit_metering
+    connect qkit_media -> qkit_zero_linkage
+    connect qkit_compliance -> qkit_identity
+    connect qkit_compliance -> qkit_metering
+    connect qkit_compliance -> qkit_sanitize
+    connect qkit_collaboration -> qkit_identity
+    connect qkit_collaboration -> qkit_metering
+    connect qkit_collaboration -> qkit_zero_linkage
+    connect qkit_ci -> qkit_identity
+    connect qkit_ci -> qkit_metering
+    connect qkit_wallet -> qkit_identity
+    connect qkit_wallet -> qkit_metering
+    connect qkit_wallet -> qkit_zero_linkage
+    connect qkit_sensor -> qkit_identity
+    connect qkit_sensor -> qkit_metering
+    connect qkit_portal -> qkit_identity
+    connect qkit_portal -> qkit_metering
+    connect qkit_portal -> qkit_rate_limiter
+    connect qkit_portal -> qkit_zero_linkage
+
+    bind qkit_li_effects -> li_engine
+
+    @observe true
+    @serialize "verify/qkit_platform.esz"
+    ai_feed full_flir true, optimized_ir true, optimization_metadata true
+
+    target wasm_client
+    target alpha_devnet
+}

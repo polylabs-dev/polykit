@@ -1,0 +1,13 @@
+[package]
+name = "qkit-console"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Console widget data pipeline: event bus, RBAC, demo fixtures, StreamSight/LI Effects processors — WASM-native"
+
+[dependencies]
+qkit-core = { workspace = true }
+qkit-sanitize = { workspace = true }
+streamsight = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

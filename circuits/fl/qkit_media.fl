@@ -1,0 +1,421 @@
+/// QKit Media — PQ-encrypted media pipeline composition
+///
+/// Composes eStream's media pipeline (image processing, video codec, gallery,
+/// adaptive bitrate streaming) with QKit identity, classification, metering,
+/// and provenance attestation. All media assets are encrypted at rest with
+/// per-product key isolation.
+///
+/// Products: Photos, Camera, Stream, Messenger, Files
+///
+/// Lex Architecture:
+///   esn/global/org/polyqlabs/media
+///   Per-asset sub-lex for media content, thumbnails, and provenance chains.
+///   Only aggregate metrics (upload counts, transcode latency) fan up.
+///
+/// govern lex esn/global/org/polyqlabs/media
+
+import qkit_identity from "./qkit_identity.fl"
+import qkit_metering from "./qkit_metering.fl"
+import qkit_zero_linkage from "./qkit_zero_linkage.fl"
+import qkit_governance from "./qkit_governance.fl"
+
+// ── Types ────────────────────────────────────────────────────────────
+
+type AssetId = bytes(32)
+type ProvenanceId = bytes(32)
+
+type MediaType = enum {
+    Image,
+    Video,
+    Audio,
+    Document,
+    Archive,
+}
+
+type CodecProfile = enum {
+    H264Baseline,
+    H264High,
+    H265Main,
+    Av1Main,
+    OpusVoip,
+    Opus48k,
+    JpegXl,
+    WebpLossless,
+}
+
+type TranscodeStatus = enum {
+    Queued,
+    Processing,
+    Complete,
+    Failed,
+}
+
+// ── Data Declarations with Stratum + Cortex ─────────────────────────
+
+data MediaAsset : qkit v1 {
+    asset_id: AssetId,
+    owner_id: bytes(16),
+    media_type: MediaType,
+    content_hash: bytes(32),
+    encryption_key_hash: bytes(32),
+    size_bytes: u64,
+    width: u32,
+    height: u32,
+    duration_ms: u64,
+    classification: string,
+    uploaded_at_ms: u64,
+}
+    store kv
+    govern lex esn/global/org/polyqlabs/media
+    cortex {
+        redact [encryption_key_hash]
+        infer on_write
+        on_anomaly alert "media-team"
+    }
+
+data MediaPermission : qkit v1 {
+    asset_id: AssetId,
+    user_id: bytes(16),
+    can_view: bool,
+    can_download: bool,
+    can_share: bool,
+    can_delete: bool,
+    granted_by: bytes(16),
+    expires_at_ms: u64,
+}
+    store kv
+    govern lex esn/global/org/polyqlabs/media
+    cortex {
+        infer on_read
+    }
+
+data MediaProvenance : qkit v1 {
+    provenance_id: ProvenanceId,
+    asset_id: AssetId,
+    capture_device_hash: bytes(32),
+    capture_timestamp_ms: u64,
+    gps_encrypted: bytes(64),
+    sensor_attestation: bytes(4627),
+    chain_hash: bytes(32),
+    previous_provenance: ProvenanceId,
+}
+    store kv
+    govern lex esn/global/org/polyqlabs/media
+    cortex {
+        redact [gps_encrypted]
+        infer on_write
+    }
+
+data TranscodeJob : qkit v1 {
+    job_id: bytes(32),
+    asset_id: AssetId,
+    source_codec: CodecProfile,
+    target_codec: CodecProfile,
+    target_width: u32,
+    target_height: u32,
+    target_bitrate: u32,
+    status: TranscodeStatus,
+    progress_pct: u8,
+    started_at_ms: u64,
+    completed_at_ms: u64,
+}
+    store kv
+    govern lex esn/global/org/polyqlabs/media
+    cortex {
+        infer on_write
+    }
+
+// ── Streams ─────────────────────────────────────────────────────────
+
+stream media_events {
+    event media_uploaded { asset_id: bytes(32), media_type: string, size_bytes: u64 }
+    event media_processed { asset_id: bytes(32), operation: string }
+    event provenance_attested { asset_id: bytes(32), provenance_id: bytes(32) }
+    event transcode_completed { job_id: bytes(32), asset_id: bytes(32) }
+}
+    retention 365d
+    consumers [streamsight, metering, governance]
+
+// ── Series ──────────────────────────────────────────────────────────
+
+series media_series {
+    over MediaAsset,
+    fields: [upload_count, total_bytes, transcode_count, provenance_count]
+}
+
+// ── Core Circuits ───────────────────────────────────────────────────
+
+/// Upload and encrypt a media asset with per-product key isolation.
+@guard(block_on: upload_rejected)
+circuit upload_media(
+    user_id: bytes(16),
+    content: bytes,
+    media_type: MediaType,
+    product_context: string,
+) -> MediaAsset
+    profile poly_framework_standard
+    lex esn/global/org/polyqlabs/media
+    precision B
+    observe metrics: [media_uploads, bytes_uploaded, upload_latency_ms]
+    monitor "upload_latency" { upload_latency_ms < 5000 }
+    invariant "content_nonempty" { len(content) > 0 }
+    invariant "user_authenticated" { len(user_id) == 16 }
+    property safety "content_encrypted_at_rest" { stored content is always PQ-encrypted }
+    meters [compute_cycles, memory_bytes, storage, bandwidth]
+    wasm_abi [eslite_insert, stream_emit, now]
+    test golden "upload_image" {
+        let uid = bytes(16, 0x01)
+        let content = bytes(4096, 0xAA)
+        let result = upload_media(uid, content, MediaType::Image, "q-photos-v1")
+        assert len(result.asset_id) == 32
+        assert result.media_type == MediaType::Image
+    }
+{
+    let ts = now()
+    let content_hash = sha3_256(content)
+    let asset_id = sha3_256(concat(user_id, content_hash, encode(ts)))
+    let key_material = hkdf_sha3(user_id, encode(product_context), 32)
+    let key_hash = sha3_256(key_material)
+    let nonce = blake3(asset_id)
+    let encrypted = aes_gcm_encrypt(key_hash, nonce, content, asset_id)
+
+    eslite_insert("media_content", asset_id, encrypted)
+
+    let dimensions = media_probe_dimensions(content)
+
+    let asset = MediaAsset {
+        asset_id: asset_id,
+        owner_id: user_id,
+        media_type: media_type,
+        content_hash: content_hash,
+        encryption_key_hash: key_hash,
+        size_bytes: len(content) as u64,
+        width: dimensions.width,
+        height: dimensions.height,
+        duration_ms: dimensions.duration_ms,
+        classification: "internal",
+        uploaded_at_ms: ts,
+    }
+
+    eslite_insert("media_assets", asset_id, asset)
+    emit(media_events, { media_uploaded: { asset_id: asset_id, media_type: encode(media_type), size_bytes: len(content) as u64 } })
+
+    let dims = qkit_metering::DimensionValues { executions: 1, hashes: 2, bandwidth: len(content) as u64, storage: len(content) as u64, observables: 1, proofs: 0, circuits: 1, mpc_sessions: 0 }
+    qkit_metering::record_usage(user_id, "upload_media", dims)
+
+    zeroize(key_material)
+    asset
+}
+
+/// Process media: apply transformations (resize, crop, filter, watermark).
+circuit process_media(
+    asset: MediaAsset,
+    operation: string,
+    params: bytes,
+) -> MediaAsset
+    profile poly_framework_standard
+    lex esn/global/org/polyqlabs/media
+    precision B
+    observe metrics: [media_processed, processing_latency_ms]
+    monitor "processing_latency" { processing_latency_ms < 10000 }
+    invariant "asset_valid" { len(asset.asset_id) == 32 }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_query, eslite_insert, stream_emit, now]
+{
+    let ts = now()
+    let content = eslite_query("media_content", asset.asset_id)
+    let processed = media_transform(content, operation, params)
+    let new_hash = sha3_256(processed)
+
+    eslite_insert("media_content", asset.asset_id, processed)
+    emit(media_events, { media_processed: { asset_id: asset.asset_id, operation: operation } })
+
+    let dims = qkit_metering::DimensionValues { executions: 1, hashes: 1, bandwidth: 0, storage: 0, observables: 1, proofs: 0, circuits: 1, mpc_sessions: 0 }
+    qkit_metering::record_usage(asset.owner_id, "process_media", dims)
+
+    MediaAsset {
+        asset_id: asset.asset_id,
+        owner_id: asset.owner_id,
+        media_type: asset.media_type,
+        content_hash: new_hash,
+        encryption_key_hash: asset.encryption_key_hash,
+        size_bytes: len(processed) as u64,
+        width: asset.width,
+        height: asset.height,
+        duration_ms: asset.duration_ms,
+        classification: asset.classification,
+        uploaded_at_ms: asset.uploaded_at_ms,
+    }
+}
+
+/// Attest provenance: create a signed chain proving media origin and integrity.
+@guard(block_on: attestation_failed)
+circuit attest_provenance(
+    asset: MediaAsset,
+    capture_device_hash: bytes(32),
+    gps_data: bytes(64),
+    signing_sk: bytes(4896),
+) -> MediaProvenance
+    profile poly_framework_sensitive
+    lex esn/global/org/polyqlabs/media
+    precision C
+    constant_time true
+    observe metrics: [provenance_attestations, chain_extensions]
+    invariant "device_hash_valid" { len(capture_device_hash) == 32 }
+    property safety "provenance_immutable" { chain_hash binds all fields }
+    property safety "no_sk_in_output" { output contains no signing_sk bits }
+    fuzz_target
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, eslite_query, stream_emit, now]
+{
+    let ts = now()
+    let gps_encrypted = aes_gcm_encrypt(asset.encryption_key_hash, blake3(asset.asset_id), gps_data, asset.asset_id)
+
+    let previous = eslite_query("media_provenance_latest", asset.asset_id)
+    let prev_id = if previous != null { previous.provenance_id } else { bytes(32, 0x00) }
+
+    let chain_payload = concat(asset.content_hash, capture_device_hash, encode(ts), prev_id)
+    let chain_hash = sha3_256(chain_payload)
+    let attestation = mldsa_sign(signing_sk, chain_payload)
+    let provenance_id = sha3_256(concat(chain_hash, encode(ts)))
+
+    let prov = MediaProvenance {
+        provenance_id: provenance_id,
+        asset_id: asset.asset_id,
+        capture_device_hash: capture_device_hash,
+        capture_timestamp_ms: ts,
+        gps_encrypted: gps_encrypted,
+        sensor_attestation: attestation,
+        chain_hash: chain_hash,
+        previous_provenance: prev_id,
+    }
+
+    eslite_insert("media_provenance", provenance_id, prov)
+    eslite_insert("media_provenance_latest", asset.asset_id, prov)
+    emit(media_events, { provenance_attested: { asset_id: asset.asset_id, provenance_id: provenance_id } })
+
+    zeroize(signing_sk)
+    prov
+}
+
+/// Queue a transcode job for adaptive bitrate streaming.
+circuit transcode_video(
+    asset: MediaAsset,
+    target_codec: CodecProfile,
+    target_width: u32,
+    target_height: u32,
+    target_bitrate: u32,
+) -> TranscodeJob
+    profile poly_framework_standard
+    lex esn/global/org/polyqlabs/media
+    precision B
+    observe metrics: [transcode_jobs_queued, transcode_latency_ms]
+    invariant "video_asset" { asset.media_type == MediaType::Video or asset.media_type == MediaType::Audio }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let ts = now()
+    let job_id = sha3_256(concat(asset.asset_id, encode(target_codec), encode(ts)))
+
+    let job = TranscodeJob {
+        job_id: job_id,
+        asset_id: asset.asset_id,
+        source_codec: CodecProfile::H264High,
+        target_codec: target_codec,
+        target_width: target_width,
+        target_height: target_height,
+        target_bitrate: target_bitrate,
+        status: TranscodeStatus::Queued,
+        progress_pct: 0,
+        started_at_ms: ts,
+        completed_at_ms: 0,
+    }
+
+    eslite_insert("transcode_jobs", job_id, job)
+
+    let dims = qkit_metering::DimensionValues { executions: 1, hashes: 1, bandwidth: 0, storage: 0, observables: 1, proofs: 0, circuits: 1, mpc_sessions: 0 }
+    qkit_metering::record_usage(asset.owner_id, "transcode_video", dims)
+
+    job
+}
+
+/// Generate a thumbnail from a media asset.
+circuit generate_thumbnail(
+    asset: MediaAsset,
+    width: u32,
+    height: u32,
+) -> bytes
+    profile poly_framework_standard
+    lex esn/global/org/polyqlabs/media
+    precision B
+    observe metrics: [thumbnails_generated]
+    invariant "dimensions_positive" { width > 0 and height > 0 }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_query, eslite_insert]
+{
+    let content = eslite_query("media_content", asset.asset_id)
+    let thumbnail = media_resize(content, width, height)
+    let thumb_key = concat(asset.asset_id, encode(width), encode(height))
+    eslite_insert("media_thumbnails", thumb_key, thumbnail)
+    thumbnail
+}
+
+// ── Test / KAT / Fuzz annotations ──────────────────────────────────
+
+test golden "upload_and_process_media" {
+    setup {
+        let uid = bytes(16, 0x01)
+        let content = bytes(8192, 0xAA)
+    }
+    input {
+        user_id: uid
+        content: content
+        media_type: MediaType::Image
+        product_context: "q-photos-v1"
+    }
+    assert {
+        len(result.asset_id) == 32
+        result.size_bytes == 8192
+    }
+}
+
+test golden "attest_provenance_chain" {
+    setup {
+        let asset = MediaAsset {
+            asset_id: bytes(32, 0xAA),
+            owner_id: bytes(16, 0x01),
+            media_type: MediaType::Image,
+            content_hash: bytes(32, 0xBB),
+            encryption_key_hash: bytes(32, 0xCC),
+            size_bytes: 4096,
+            width: 1920,
+            height: 1080,
+            duration_ms: 0,
+            classification: "internal",
+            uploaded_at_ms: 1000,
+        }
+    }
+    input {
+        asset: asset
+        capture_device_hash: bytes(32, 0xDD)
+        gps_data: bytes(64, 0xEE)
+        signing_sk: bytes(4896, 0xFF)
+    }
+    assert {
+        len(result.provenance_id) == 32
+        len(result.sensor_attestation) == 4627
+        len(result.chain_hash) == 32
+    }
+}
+
+fuzz_target "upload_media_fuzz" {
+    inputs {
+        user_id: bytes(16)
+        content: bytes(1..65536)
+        media_type: u8(0..4)
+        product_context: string(1..128)
+    }
+    assert {
+        no_panic
+    }
+}

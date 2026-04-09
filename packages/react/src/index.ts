@@ -1,5 +1,5 @@
 /**
- * @polykit/react — Thin DOM binding layer for PolyKit WASM
+ * @qkit/react — Thin DOM binding layer for QKit WASM
  *
  * This package provides ONLY:
  * - React context provider (loads WASM)
@@ -11,7 +11,7 @@
  */
 
 // Provider
-export { PolyProvider, usePolyContext } from './PolyProvider';
+export { QProvider, usePolyContext } from './QProvider';
 
 // Hooks (thin wrappers over WASM)
 export {

@@ -1,0 +1,435 @@
+/// QKit Collaboration — PQ-encrypted real-time collaboration composition
+///
+/// Composes eStream's collab.fl + crdt_sync.fl with QKit identity,
+/// zero-linkage isolation, metering, and governance. Provides rooms,
+/// participant management, CRDT merge, and cursor presence for all
+/// collaborative products.
+///
+/// Products: Docs, Slides, Sheets, Notes, Studio, Tasks
+///
+/// Lex Architecture:
+///   esn/global/org/polyqlabs/collaboration
+///   Per-room sub-lex for CRDT state, participant lists, and cursor positions.
+///   Only aggregate metrics (room counts, merge latency) fan up.
+///
+/// govern lex esn/global/org/polyqlabs/collaboration
+
+import qkit_identity from "./qkit_identity.fl"
+import qkit_metering from "./qkit_metering.fl"
+import qkit_zero_linkage from "./qkit_zero_linkage.fl"
+
+// ── Types ────────────────────────────────────────────────────────────
+
+type RoomId = bytes(32)
+type ParticipantId = bytes(16)
+type CrdtOp = bytes(1024)
+type CursorPosition = bytes(64)
+
+type RoomState = enum {
+    Active,
+    Paused,
+    Closing,
+    Closed,
+}
+
+type ParticipantRole = enum {
+    Owner,
+    Editor,
+    Viewer,
+    Commenter,
+}
+
+// ── Data Declarations with Stratum + Cortex ─────────────────────────
+
+data CollabRoom : qkit v1 {
+    room_id: RoomId,
+    document_id: bytes(32),
+    owner_id: ParticipantId,
+    state: RoomState,
+    participant_count: u32,
+    max_participants: u32,
+    encryption_key_hash: bytes(32),
+    created_at_ms: u64,
+    last_activity_ms: u64,
+    product_context: string,
+}
+    store kv
+    govern lex esn/global/org/polyqlabs/collaboration
+    cortex {
+        redact [encryption_key_hash]
+        infer on_write
+        on_anomaly alert "collab-team"
+    }
+
+data CollabParticipant : qkit v1 {
+    room_id: RoomId,
+    user_id: ParticipantId,
+    role: ParticipantRole,
+    display_name_hash: bytes(32),
+    joined_at_ms: u64,
+    last_seen_ms: u64,
+    cursor_position: CursorPosition,
+    online: bool,
+}
+    store kv
+    govern lex esn/global/org/polyqlabs/collaboration
+    cortex {
+        obfuscate [display_name_hash]
+        infer on_write
+    }
+
+data CrdtState : qkit v1 {
+    room_id: RoomId,
+    version: u64,
+    state_hash: bytes(32),
+    pending_ops: u32,
+    last_merge_ms: u64,
+    conflict_count: u32,
+}
+    store kv
+    govern lex esn/global/org/polyqlabs/collaboration
+    cortex {
+        infer on_write
+    }
+
+data RemoteCursor : qkit v1 {
+    room_id: RoomId,
+    user_id: ParticipantId,
+    position: CursorPosition,
+    selection_start: u64,
+    selection_end: u64,
+    color_hash: bytes(4),
+    updated_at_ms: u64,
+}
+    store kv
+    govern lex esn/global/org/polyqlabs/collaboration
+
+// ── Streams ─────────────────────────────────────────────────────────
+
+stream collab_events {
+    event room_created { room_id: bytes(32), document_id: bytes(32) }
+    event participant_joined { room_id: bytes(32), user_id: bytes(16) }
+    event edit_broadcast { room_id: bytes(32), op_count: u32 }
+    event crdt_merged { room_id: bytes(32), version: u64, conflicts: u32 }
+    event state_synced { room_id: bytes(32), version: u64 }
+}
+    retention 30d
+    consumers [streamsight, metering]
+
+// ── Series ──────────────────────────────────────────────────────────
+
+series collab_series {
+    over CollabRoom,
+    fields: [rooms_created, participants_total, edits_broadcast, merges_completed]
+}
+
+// ── Core Circuits ───────────────────────────────────────────────────
+
+/// Create a collaboration room scoped to a document with PQ encryption.
+@guard(block_on: room_creation_denied)
+circuit create_room(
+    owner_id: ParticipantId,
+    document_id: bytes(32),
+    max_participants: u32,
+    product_context: string,
+) -> CollabRoom
+    profile poly_framework_standard
+    lex esn/global/org/polyqlabs/collaboration
+    precision B
+    observe metrics: [rooms_created, room_capacity]
+    monitor "room_creation_rate" { rooms_created < 500 per 3600s }
+    invariant "owner_authenticated" { len(owner_id) == 16 }
+    invariant "document_valid" { len(document_id) == 32 }
+    invariant "max_participants_bounded" { max_participants > 0 and max_participants <= 256 }
+    property liveness "room_created" { eventually(room_id != null) }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, stream_emit, now]
+    test golden "create_collab_room" {
+        let oid = bytes(16, 0x01)
+        let did = bytes(32, 0xAA)
+        let result = create_room(oid, did, 50, "q-docs-v1")
+        assert len(result.room_id) == 32
+        assert result.state == RoomState::Active
+        assert result.participant_count == 1
+    }
+{
+    let ts = now()
+    let room_seed = concat(owner_id, document_id, encode(product_context), encode(ts))
+    let room_id = sha3_256(room_seed)
+    let key_material = hkdf_sha3(owner_id, concat("collab-room-v1:", room_id), 32)
+    let key_hash = sha3_256(key_material)
+
+    let room = CollabRoom {
+        room_id: room_id,
+        document_id: document_id,
+        owner_id: owner_id,
+        state: RoomState::Active,
+        participant_count: 1,
+        max_participants: max_participants,
+        encryption_key_hash: key_hash,
+        created_at_ms: ts,
+        last_activity_ms: ts,
+        product_context: product_context,
+    }
+
+    eslite_insert("collab_rooms", room_id, room)
+    emit(collab_events, { room_created: { room_id: room_id, document_id: document_id } })
+
+    let owner_participant = CollabParticipant {
+        room_id: room_id,
+        user_id: owner_id,
+        role: ParticipantRole::Owner,
+        display_name_hash: sha3_256(owner_id),
+        joined_at_ms: ts,
+        last_seen_ms: ts,
+        cursor_position: bytes(64, 0x00),
+        online: true,
+    }
+    eslite_insert("collab_participants", concat(room_id, owner_id), owner_participant)
+
+    let crdt = CrdtState {
+        room_id: room_id,
+        version: 0,
+        state_hash: sha3_256(room_id),
+        pending_ops: 0,
+        last_merge_ms: ts,
+        conflict_count: 0,
+    }
+    eslite_insert("collab_crdt", room_id, crdt)
+
+    let dims = qkit_metering::DimensionValues { executions: 1, hashes: 3, bandwidth: 0, storage: 0, observables: 1, proofs: 0, circuits: 1, mpc_sessions: 0 }
+    qkit_metering::record_usage(owner_id, "create_room", dims)
+
+    zeroize(key_material)
+    room
+}
+
+/// Join an existing collaboration room with role assignment.
+@guard(block_on: room_full)
+circuit join_room(
+    room: CollabRoom,
+    user_id: ParticipantId,
+    role: ParticipantRole,
+) -> CollabParticipant
+    profile poly_framework_standard
+    lex esn/global/org/polyqlabs/collaboration
+    precision B
+    observe metrics: [participants_joined, room_occupancy]
+    invariant "room_active" { room.state == RoomState::Active }
+    invariant "room_not_full" { room.participant_count < room.max_participants }
+    invariant "user_authenticated" { len(user_id) == 16 }
+    property safety "no_duplicate_join" { participant not already in room }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, eslite_query, stream_emit, now]
+{
+    let ts = now()
+    let existing = eslite_query("collab_participants", concat(room.room_id, user_id))
+    if existing != null and existing.online {
+        return existing
+    }
+
+    let participant = CollabParticipant {
+        room_id: room.room_id,
+        user_id: user_id,
+        role: role,
+        display_name_hash: sha3_256(user_id),
+        joined_at_ms: ts,
+        last_seen_ms: ts,
+        cursor_position: bytes(64, 0x00),
+        online: true,
+    }
+
+    eslite_insert("collab_participants", concat(room.room_id, user_id), participant)
+    emit(collab_events, { participant_joined: { room_id: room.room_id, user_id: user_id } })
+
+    let dims = qkit_metering::DimensionValues { executions: 1, hashes: 1, bandwidth: 0, storage: 0, observables: 1, proofs: 0, circuits: 1, mpc_sessions: 0 }
+    qkit_metering::record_usage(user_id, "join_room", dims)
+
+    participant
+}
+
+/// Broadcast an edit operation to all room participants.
+circuit broadcast_edit(
+    room: CollabRoom,
+    sender_id: ParticipantId,
+    ops: [CrdtOp; 64],
+    op_count: u32,
+) -> CrdtState
+    profile poly_framework_standard
+    lex esn/global/org/polyqlabs/collaboration
+    precision C
+    offline mode crdt, sync eventual, max_offline 30d
+    observe metrics: [edits_broadcast, ops_per_edit, broadcast_latency_us]
+    monitor "broadcast_latency" { broadcast_latency_us < 50000 }
+    invariant "room_active" { room.state == RoomState::Active }
+    invariant "ops_nonempty" { op_count > 0 }
+    property safety "ops_encrypted_in_transit" { broadcast uses room encryption key }
+    meters [compute_cycles, memory_bytes, bandwidth]
+    wasm_abi [eslite_query, eslite_insert, stream_emit, now]
+{
+    let ts = now()
+    let crdt = eslite_query("collab_crdt", room.room_id)
+    let new_version = crdt.version + 1
+
+    let ops_hash = sha3_256(serialize(ops, op_count))
+    let new_state_hash = sha3_256(concat(crdt.state_hash, ops_hash))
+
+    let updated = CrdtState {
+        room_id: room.room_id,
+        version: new_version,
+        state_hash: new_state_hash,
+        pending_ops: crdt.pending_ops + op_count,
+        last_merge_ms: ts,
+        conflict_count: crdt.conflict_count,
+    }
+
+    eslite_insert("collab_crdt", room.room_id, updated)
+    emit(collab_events, { edit_broadcast: { room_id: room.room_id, op_count: op_count } })
+
+    let dims = qkit_metering::DimensionValues { executions: 1, hashes: 2, bandwidth: op_count as u64 * 1024, storage: 0, observables: 1, proofs: 0, circuits: 1, mpc_sessions: 0 }
+    qkit_metering::record_usage(sender_id, "broadcast_edit", dims)
+
+    updated
+}
+
+/// Merge CRDT states from multiple replicas with conflict resolution.
+circuit merge_crdt(
+    local: CrdtState,
+    remote: CrdtState,
+) -> CrdtState
+    profile poly_framework_standard
+    lex esn/global/org/polyqlabs/collaboration
+    precision C
+    offline mode crdt, sync eventual, max_offline 30d
+    observe metrics: [crdt_merges, merge_conflicts, merge_latency_us]
+    monitor "merge_latency" { merge_latency_us < 10000 }
+    invariant "same_room" { local.room_id == remote.room_id }
+    invariant "merge_commutative" { merge(a, b) == merge(b, a) }
+    invariant "merge_idempotent" { merge(a, a) == a }
+    property liveness "eventual_convergence" { eventually(synced) }
+    fuzz_target
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let ts = now()
+    let merged_version = max(local.version, remote.version) + 1
+    let merged_hash = sha3_256(concat(local.state_hash, remote.state_hash))
+    let conflicts = if local.state_hash != remote.state_hash and local.version == remote.version { 1 } else { 0 }
+
+    let merged = CrdtState {
+        room_id: local.room_id,
+        version: merged_version,
+        state_hash: merged_hash,
+        pending_ops: 0,
+        last_merge_ms: ts,
+        conflict_count: local.conflict_count + remote.conflict_count + conflicts,
+    }
+
+    eslite_insert("collab_crdt", local.room_id, merged)
+    emit(collab_events, { crdt_merged: { room_id: local.room_id, version: merged_version, conflicts: conflicts } })
+
+    merged
+}
+
+/// Sync full CRDT state to a reconnecting participant.
+circuit sync_state(
+    room: CollabRoom,
+    user_id: ParticipantId,
+) -> CrdtState
+    profile poly_framework_standard
+    lex esn/global/org/polyqlabs/collaboration
+    precision B
+    offline mode crdt, sync eventual, max_offline 30d
+    observe metrics: [state_syncs, sync_bytes]
+    monitor "sync_latency" { sync_latency_ms < 5000 }
+    invariant "room_exists" { len(room.room_id) == 32 }
+    meters [compute_cycles, bandwidth]
+    wasm_abi [eslite_query, stream_emit, now]
+{
+    let ts = now()
+    let crdt = eslite_query("collab_crdt", room.room_id)
+
+    let participant_key = concat(room.room_id, user_id)
+    let participant = eslite_query("collab_participants", participant_key)
+    if participant != null {
+        let updated = CollabParticipant {
+            room_id: participant.room_id,
+            user_id: participant.user_id,
+            role: participant.role,
+            display_name_hash: participant.display_name_hash,
+            joined_at_ms: participant.joined_at_ms,
+            last_seen_ms: ts,
+            cursor_position: participant.cursor_position,
+            online: true,
+        }
+        eslite_insert("collab_participants", participant_key, updated)
+    }
+
+    emit(collab_events, { state_synced: { room_id: room.room_id, version: crdt.version } })
+
+    let dims = qkit_metering::DimensionValues { executions: 1, hashes: 0, bandwidth: 0, storage: 0, observables: 1, proofs: 0, circuits: 1, mpc_sessions: 0 }
+    qkit_metering::record_usage(user_id, "sync_state", dims)
+
+    crdt
+}
+
+// ── Test / KAT / Fuzz annotations ──────────────────────────────────
+
+test golden "create_and_join_room" {
+    setup {
+        let oid = bytes(16, 0x01)
+        let did = bytes(32, 0xAA)
+    }
+    input {
+        owner_id: oid
+        document_id: did
+        max_participants: 50
+        product_context: "q-docs-v1"
+    }
+    assert {
+        len(result.room_id) == 32
+        result.participant_count == 1
+        result.state == RoomState::Active
+    }
+}
+
+test golden "merge_crdt_commutative" {
+    setup {
+        let room_id = bytes(32, 0xAA)
+        let a = CrdtState { room_id: room_id, version: 5, state_hash: bytes(32, 0x01), pending_ops: 0, last_merge_ms: 1000, conflict_count: 0 }
+        let b = CrdtState { room_id: room_id, version: 3, state_hash: bytes(32, 0x02), pending_ops: 0, last_merge_ms: 2000, conflict_count: 0 }
+    }
+    input {
+        local: a
+        remote: b
+    }
+    assert {
+        result.version == 6
+        result.room_id == room_id
+    }
+}
+
+fuzz_target "collab_room_fuzz" {
+    inputs {
+        owner_id: bytes(16)
+        document_id: bytes(32)
+        max_participants: u32(1..256)
+        product_context: string(1..128)
+    }
+    assert {
+        no_panic
+    }
+}
+
+fuzz_target "crdt_merge_fuzz" {
+    inputs {
+        room_id: bytes(32)
+        version_a: u64
+        version_b: u64
+        hash_a: bytes(32)
+        hash_b: bytes(32)
+    }
+    assert {
+        no_panic
+    }
+}

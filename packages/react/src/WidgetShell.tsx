@@ -6,7 +6,7 @@
  */
 
 import React, { Suspense } from 'react';
-import { usePolyContext } from './PolyProvider';
+import { usePolyContext } from './QProvider';
 
 interface WidgetShellProps {
   /** Widget ID for data routing */
@@ -37,7 +37,7 @@ export function WidgetShell({
   if (!hasAccess) {
     return (
       <div
-        className="polykit-widget-shell unauthorized"
+        className="qkit-widget-shell unauthorized"
         style={{ gridColumn: `span ${size.cols}`, gridRow: `span ${size.rows}` }}
       >
         <div className="widget-header">{title}</div>
@@ -48,7 +48,7 @@ export function WidgetShell({
 
   return (
     <div
-      className="polykit-widget-shell"
+      className="qkit-widget-shell"
       data-widget-id={widgetId}
       style={{ gridColumn: `span ${size.cols}`, gridRow: `span ${size.rows}` }}
     >

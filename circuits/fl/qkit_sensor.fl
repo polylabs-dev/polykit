@@ -1,0 +1,471 @@
+/// QKit Sensor — PQ-attested sensor and location proof composition
+///
+/// Composes eStream's companion SoC circuits (proof_of_reality.fl,
+/// sensor_attestation.fl) with QKit identity and classification.
+/// Provides hardware-attested sensor readings, location proofs,
+/// and biometric sample processing with ML-DSA-87 signing.
+///
+/// Products: Camera, Health, Find
+///
+/// Lex Architecture:
+///   esn/global/org/polyqlabs/sensor
+///   Per-device sub-lex for sensor readings, attestation chains, and
+///   biometric samples. Only aggregate metrics (reading counts, attestation
+///   rates) fan up.
+///
+/// govern lex esn/global/org/polyqlabs/sensor
+
+import qkit_identity from "./qkit_identity.fl"
+import qkit_metering from "./qkit_metering.fl"
+import qkit_governance from "./qkit_governance.fl"
+
+// ── Types ────────────────────────────────────────────────────────────
+
+type DeviceId = bytes(32)
+type ReadingId = bytes(32)
+type AttestationId = bytes(32)
+
+type SensorKind = enum {
+    Camera,
+    Gps,
+    Accelerometer,
+    Gyroscope,
+    Barometer,
+    HeartRate,
+    SpO2,
+    Temperature,
+    Fingerprint,
+    FaceId,
+}
+
+type AttestationLevel = enum {
+    Software,
+    Tee,
+    HardwareSoC,
+}
+
+type BiometricKind = enum {
+    Fingerprint,
+    FaceMap,
+    IrisScan,
+    VoicePrint,
+    HeartRatePattern,
+}
+
+// ── Data Declarations with Stratum + Cortex ─────────────────────────
+
+data SensorReading : qkit v1 {
+    reading_id: ReadingId,
+    device_id: DeviceId,
+    sensor_kind: SensorKind,
+    raw_data_hash: bytes(32),
+    encrypted_data: bytes,
+    timestamp_ms: u64,
+    accuracy: u32,
+    attestation_level: AttestationLevel,
+    product_context: string,
+}
+    store kv
+    govern lex esn/global/org/polyqlabs/sensor
+    cortex {
+        redact [encrypted_data]
+        infer on_write
+        on_anomaly alert "sensor-team"
+    }
+
+data SensorAttestation : qkit v1 {
+    attestation_id: AttestationId,
+    reading_id: ReadingId,
+    device_id: DeviceId,
+    sensor_kind: SensorKind,
+    data_hash: bytes(32),
+    device_signature: bytes(4627),
+    device_pk: bytes(2592),
+    chain_hash: bytes(32),
+    previous_attestation: AttestationId,
+    attestation_level: AttestationLevel,
+    attested_at_ms: u64,
+}
+    store kv
+    govern lex esn/global/org/polyqlabs/sensor
+    cortex {
+        infer on_write
+    }
+
+data LocationProof : qkit v1 {
+    proof_id: bytes(32),
+    device_id: DeviceId,
+    latitude_encrypted: bytes(32),
+    longitude_encrypted: bytes(32),
+    altitude_encrypted: bytes(16),
+    accuracy_meters: u32,
+    timestamp_ms: u64,
+    gps_signature: bytes(4627),
+    witness_signatures: [bytes(4627); 3],
+    witness_count: u8,
+}
+    store kv
+    govern lex esn/global/org/polyqlabs/sensor
+    cortex {
+        redact [latitude_encrypted, longitude_encrypted, altitude_encrypted]
+        infer on_write
+    }
+
+data BiometricSample : qkit v1 {
+    sample_id: bytes(32),
+    user_id: bytes(16),
+    kind: BiometricKind,
+    template_hash: bytes(32),
+    encrypted_template: bytes,
+    quality_score: u8,
+    liveness_verified: bool,
+    captured_at_ms: u64,
+    device_id: DeviceId,
+}
+    store kv
+    govern lex esn/global/org/polyqlabs/sensor
+    cortex {
+        redact [encrypted_template]
+        obfuscate [template_hash]
+        infer on_write
+        on_anomaly alert "biometric-team"
+    }
+
+// ── Streams ─────────────────────────────────────────────────────────
+
+stream sensor_events {
+    event reading_captured { reading_id: bytes(32), sensor_kind: string }
+    event attestation_created { attestation_id: bytes(32), level: string }
+    event location_proved { proof_id: bytes(32), witness_count: u8 }
+    event biometric_sampled { sample_id: bytes(32), kind: string, quality: u8 }
+}
+    retention 365d
+    consumers [streamsight, metering, governance]
+
+// ── Series ──────────────────────────────────────────────────────────
+
+series sensor_series {
+    over SensorReading,
+    fields: [readings_captured, attestations_created, locations_proved, biometrics_sampled]
+}
+
+// ── Core Circuits ───────────────────────────────────────────────────
+
+/// Capture and encrypt a sensor reading with device attestation.
+@guard(block_on: sensor_read_failed)
+circuit read_sensor(
+    device_id: DeviceId,
+    sensor_kind: SensorKind,
+    raw_data: bytes,
+    encryption_key: bytes(32),
+    product_context: string,
+) -> SensorReading
+    profile poly_framework_standard
+    lex esn/global/org/polyqlabs/sensor
+    precision B
+    observe metrics: [readings_captured, sensor_distribution]
+    monitor "reading_rate" { readings_captured < 10000 per 60s }
+    invariant "device_valid" { len(device_id) == 32 }
+    invariant "data_nonempty" { len(raw_data) > 0 }
+    property safety "data_encrypted_at_rest" { raw_data never stored in plaintext }
+    meters [compute_cycles, memory_bytes, storage]
+    wasm_abi [eslite_insert, stream_emit, now]
+    test golden "read_gps_sensor" {
+        let did = bytes(32, 0xAA)
+        let data = bytes(128, 0xBB)
+        let key = bytes(32, 0xCC)
+        let result = read_sensor(did, SensorKind::Gps, data, key, "q-find-v1")
+        assert len(result.reading_id) == 32
+        assert result.sensor_kind == SensorKind::Gps
+    }
+{
+    let ts = now()
+    let data_hash = sha3_256(raw_data)
+    let reading_id = sha3_256(concat(device_id, data_hash, encode(ts)))
+    let nonce = blake3(reading_id)
+    let encrypted_data = aes_gcm_encrypt(encryption_key, nonce, raw_data, reading_id)
+
+    let attestation_level = sensor_detect_attestation_level(device_id, sensor_kind)
+
+    let reading = SensorReading {
+        reading_id: reading_id,
+        device_id: device_id,
+        sensor_kind: sensor_kind,
+        raw_data_hash: data_hash,
+        encrypted_data: encrypted_data,
+        timestamp_ms: ts,
+        accuracy: sensor_get_accuracy(device_id, sensor_kind),
+        attestation_level: attestation_level,
+        product_context: product_context,
+    }
+
+    eslite_insert("sensor_readings", reading_id, reading)
+    emit(sensor_events, { reading_captured: { reading_id: reading_id, sensor_kind: encode(sensor_kind) } })
+
+    let dims = qkit_metering::DimensionValues { executions: 1, hashes: 2, bandwidth: 0, storage: len(raw_data) as u64, observables: 1, proofs: 0, circuits: 1, mpc_sessions: 0 }
+    qkit_metering::record_usage(bit_slice(device_id, 0, 128), "read_sensor", dims)
+
+    reading
+}
+
+/// Create a signed attestation chain entry for a sensor reading.
+@guard(block_on: attestation_failed)
+circuit attest_reading(
+    reading: SensorReading,
+    signing_sk: bytes(4896),
+    signing_pk: bytes(2592),
+) -> SensorAttestation
+    profile poly_framework_sensitive
+    lex esn/global/org/polyqlabs/sensor
+    precision C
+    constant_time true
+    observe metrics: [attestations_created, attestation_level_distribution]
+    invariant "reading_valid" { len(reading.reading_id) == 32 }
+    property safety "attestation_binding" { signature commits to reading + device + timestamp }
+    property safety "no_sk_in_output" { output contains no signing_sk bits }
+    fuzz_target
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, eslite_query, stream_emit, now]
+{
+    let ts = now()
+    let previous = eslite_query("sensor_attestation_latest", reading.device_id)
+    let prev_id = if previous != null { previous.attestation_id } else { bytes(32, 0x00) }
+
+    let chain_payload = concat(reading.reading_id, reading.device_id, reading.raw_data_hash, encode(ts), prev_id)
+    let chain_hash = sha3_256(chain_payload)
+    let signature = mldsa_sign(signing_sk, chain_payload)
+    let attestation_id = sha3_256(concat(chain_hash, encode(ts)))
+
+    let attestation = SensorAttestation {
+        attestation_id: attestation_id,
+        reading_id: reading.reading_id,
+        device_id: reading.device_id,
+        sensor_kind: reading.sensor_kind,
+        data_hash: reading.raw_data_hash,
+        device_signature: signature,
+        device_pk: signing_pk,
+        chain_hash: chain_hash,
+        previous_attestation: prev_id,
+        attestation_level: reading.attestation_level,
+        attested_at_ms: ts,
+    }
+
+    eslite_insert("sensor_attestations", attestation_id, attestation)
+    eslite_insert("sensor_attestation_latest", reading.device_id, attestation)
+    emit(sensor_events, { attestation_created: { attestation_id: attestation_id, level: encode(reading.attestation_level) } })
+
+    let dims = qkit_metering::DimensionValues { executions: 1, hashes: 2, bandwidth: 0, storage: 0, observables: 1, proofs: 1, circuits: 1, mpc_sessions: 0 }
+    qkit_metering::record_usage(bit_slice(reading.device_id, 0, 128), "attest_reading", dims)
+
+    zeroize(signing_sk)
+    attestation
+}
+
+/// Generate a witness-attested location proof from GPS readings.
+@guard(block_on: location_proof_failed)
+circuit prove_location(
+    device_id: DeviceId,
+    lat_data: bytes(32),
+    lon_data: bytes(32),
+    alt_data: bytes(16),
+    accuracy_meters: u32,
+    encryption_key: bytes(32),
+    signing_sk: bytes(4896),
+) -> LocationProof
+    profile poly_framework_sensitive
+    lex esn/global/org/polyqlabs/sensor
+    precision C
+    constant_time true
+    observe metrics: [locations_proved, witness_attestations]
+    invariant "device_valid" { len(device_id) == 32 }
+    invariant "accuracy_bounded" { accuracy_meters < 100000 }
+    property safety "coordinates_encrypted" { lat/lon never stored in plaintext }
+    property safety "no_sk_in_output" { output contains no signing_sk bits }
+    fuzz_target
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let ts = now()
+    let nonce = blake3(concat(device_id, encode(ts)))
+    let lat_enc = aes_gcm_encrypt(encryption_key, nonce, lat_data, device_id)
+    let lon_enc = aes_gcm_encrypt(encryption_key, blake3(nonce), lon_data, device_id)
+    let alt_enc = aes_gcm_encrypt(encryption_key, blake3(blake3(nonce)), alt_data, device_id)
+
+    let proof_payload = concat(device_id, lat_enc, lon_enc, alt_enc, encode(accuracy_meters), encode(ts))
+    let gps_signature = mldsa_sign(signing_sk, proof_payload)
+    let proof_id = sha3_256(concat(proof_payload, encode(ts)))
+
+    let proof = LocationProof {
+        proof_id: proof_id,
+        device_id: device_id,
+        latitude_encrypted: lat_enc,
+        longitude_encrypted: lon_enc,
+        altitude_encrypted: alt_enc,
+        accuracy_meters: accuracy_meters,
+        timestamp_ms: ts,
+        gps_signature: gps_signature,
+        witness_signatures: [],
+        witness_count: 0,
+    }
+
+    eslite_insert("location_proofs", proof_id, proof)
+    emit(sensor_events, { location_proved: { proof_id: proof_id, witness_count: 0 } })
+
+    let dims = qkit_metering::DimensionValues { executions: 1, hashes: 3, bandwidth: 0, storage: 0, observables: 1, proofs: 1, circuits: 1, mpc_sessions: 0 }
+    qkit_metering::record_usage(bit_slice(device_id, 0, 128), "prove_location", dims)
+
+    zeroize(encryption_key)
+    zeroize(signing_sk)
+    proof
+}
+
+/// Capture and process a biometric sample with liveness verification.
+@guard(block_on: biometric_capture_failed)
+circuit sample_biometric(
+    user_id: bytes(16),
+    device_id: DeviceId,
+    kind: BiometricKind,
+    raw_sample: bytes,
+    encryption_key: bytes(32),
+) -> BiometricSample
+    profile poly_framework_sensitive
+    lex esn/global/org/polyqlabs/sensor
+    precision C
+    constant_time true
+    observe metrics: [biometrics_captured, liveness_checks, quality_scores]
+    monitor "biometric_rate" { biometrics_captured < 100 per 60s }
+    invariant "user_authenticated" { len(user_id) == 16 }
+    invariant "sample_nonempty" { len(raw_sample) > 0 }
+    property safety "template_encrypted" { biometric template never stored in plaintext }
+    property safety "no_raw_sample_stored" { raw_sample is processed then zeroized }
+    fuzz_target
+    meters [compute_cycles, memory_bytes, storage]
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let ts = now()
+    let template = biometric_extract_template(raw_sample, kind)
+    let quality_score = biometric_quality_check(template, kind)
+    let liveness = biometric_liveness_check(raw_sample, kind)
+    let template_hash = sha3_256(template)
+
+    let nonce = blake3(concat(user_id, encode(ts)))
+    let encrypted_template = aes_gcm_encrypt(encryption_key, nonce, template, user_id)
+    let sample_id = sha3_256(concat(user_id, template_hash, encode(ts)))
+
+    let sample = BiometricSample {
+        sample_id: sample_id,
+        user_id: user_id,
+        kind: kind,
+        template_hash: template_hash,
+        encrypted_template: encrypted_template,
+        quality_score: quality_score,
+        liveness_verified: liveness,
+        captured_at_ms: ts,
+        device_id: device_id,
+    }
+
+    eslite_insert("biometric_samples", sample_id, sample)
+    emit(sensor_events, { biometric_sampled: { sample_id: sample_id, kind: encode(kind), quality: quality_score } })
+
+    let dims = qkit_metering::DimensionValues { executions: 1, hashes: 2, bandwidth: 0, storage: len(template) as u64, observables: 1, proofs: 0, circuits: 1, mpc_sessions: 0 }
+    qkit_metering::record_usage(user_id, "sample_biometric", dims)
+
+    zeroize(raw_sample)
+    zeroize(template)
+    zeroize(encryption_key)
+    sample
+}
+
+// ── Test / KAT / Fuzz annotations ──────────────────────────────────
+
+test golden "read_and_attest_sensor" {
+    setup {
+        let did = bytes(32, 0xAA)
+        let data = bytes(256, 0xBB)
+        let key = bytes(32, 0xCC)
+    }
+    input {
+        device_id: did
+        sensor_kind: SensorKind::Camera
+        raw_data: data
+        encryption_key: key
+        product_context: "q-camera-v1"
+    }
+    assert {
+        len(result.reading_id) == 32
+        result.sensor_kind == SensorKind::Camera
+    }
+}
+
+test golden "prove_location_basic" {
+    input {
+        device_id: bytes(32, 0xAA)
+        lat_data: bytes(32, 0x01)
+        lon_data: bytes(32, 0x02)
+        alt_data: bytes(16, 0x03)
+        accuracy_meters: 10
+        encryption_key: bytes(32, 0xCC)
+        signing_sk: bytes(4896, 0xDD)
+    }
+    assert {
+        len(result.proof_id) == 32
+        result.accuracy_meters == 10
+        len(result.gps_signature) == 4627
+    }
+}
+
+test golden "sample_biometric_fingerprint" {
+    input {
+        user_id: bytes(16, 0x01)
+        device_id: bytes(32, 0xAA)
+        kind: BiometricKind::Fingerprint
+        raw_sample: bytes(1024, 0xBB)
+        encryption_key: bytes(32, 0xCC)
+    }
+    assert {
+        len(result.sample_id) == 32
+        result.kind == BiometricKind::Fingerprint
+    }
+}
+
+fuzz_target "sensor_reading_fuzz" {
+    inputs {
+        device_id: bytes(32)
+        sensor_kind: u8(0..9)
+        raw_data: bytes(1..4096)
+        encryption_key: bytes(32)
+    }
+    assert {
+        no_panic
+    }
+}
+
+fuzz_target "location_proof_fuzz" {
+    inputs {
+        device_id: bytes(32)
+        lat_data: bytes(32)
+        lon_data: bytes(32)
+        alt_data: bytes(16)
+        accuracy_meters: u32(0..99999)
+        encryption_key: bytes(32)
+        signing_sk: bytes(4896)
+    }
+    assert {
+        no_panic
+        constant_time true
+    }
+}
+
+fuzz_target "biometric_sample_fuzz" {
+    inputs {
+        user_id: bytes(16)
+        device_id: bytes(32)
+        kind: u8(0..4)
+        raw_sample: bytes(1..8192)
+        encryption_key: bytes(32)
+    }
+    assert {
+        no_panic
+        constant_time true
+    }
+}

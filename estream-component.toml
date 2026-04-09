@@ -1,8 +1,8 @@
 [component]
-name = "polykit"
+name = "qkit"
 version = "0.12.0"
 type = "sdk"
-description = "Shared SDK for all Poly Labs products"
+description = "Shared SDK for all PolyQ Labs products"
 
 [component.circuits]
 total = 26
@@ -14,16 +14,16 @@ estream = "0.12.0"
 [component.telemetry]
 schema_hash_circuit = "compute_schema_hash"
 blind = true
-context = "poly-polykit-telemetry-v1"
+context = "poly-qkit-telemetry-v1"
 
 [component.graphs]
-user_identity = "circuits/fl/graphs/polykit_user_graph.fl"
-metering_aggregation = "circuits/fl/graphs/polykit_metering_graph.fl"
-subscription_history = "circuits/fl/graphs/polykit_subscription_lifecycle.fl"
-app_module_graph = "circuits/fl/polykit_app_graph.fl"
+user_identity = "circuits/fl/graphs/qkit_user_graph.fl"
+metering_aggregation = "circuits/fl/graphs/qkit_metering_graph.fl"
+subscription_history = "circuits/fl/graphs/qkit_subscription_lifecycle.fl"
+app_module_graph = "circuits/fl/qkit_app_graph.fl"
 
 [component.cognitive]
-adapter = "circuits/fl/polykit_cognitive.fl"
-noise_filter = "circuits/fl/polykit_noise_filter.fl"
-sme_panels = "circuits/fl/polykit_sme.fl"
-app_graph = "circuits/fl/polykit_app_graph.fl"
+adapter = "circuits/fl/qkit_cognitive.fl"
+noise_filter = "circuits/fl/qkit_noise_filter.fl"
+sme_panels = "circuits/fl/qkit_sme.fl"
+app_graph = "circuits/fl/qkit_app_graph.fl"

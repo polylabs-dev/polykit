@@ -1,0 +1,418 @@
+/// QKit Subscription Lifecycle DAG — Immutable subscription event history
+///
+/// Models the subscription lifecycle as a directed acyclic graph: SubscriptionEvents
+/// are triggered by TierChanges, which are paid by PaymentEvents. The DAG provides
+/// an immutable, append-only audit trail of every subscription state transition,
+/// tier change, and payment — all using blinded tokens so no identity leaks.
+///
+/// Stratum DAG storage + Cortex AI governance
+/// govern lex global/org/polyqlabs/billing
+
+import qkit_identity from "../qkit_identity.fl"
+
+// ── Data: Node types (data + store + cortex) ────────────────────────
+
+data SubscriptionEventInfo : qkit v1 {
+    event_id: bytes(32),
+    blinded_token: bytes(32),
+    event_type: u8,
+    old_state: string,
+    new_state: string,
+    timestamp_ms: u64,
+    product_scope: string,
+}
+    store kv
+    govern lex global/org/polyqlabs/billing
+    cortex {
+        obfuscate [blinded_token]
+        infer on_write
+        on_anomaly alert "billing-team"
+    }
+
+data TierChangeInfo : qkit v1 {
+    change_id: bytes(32),
+    blinded_token: bytes(32),
+    from_tier: u8,
+    to_tier: u8,
+    reason: string,
+    timestamp_ms: u64,
+}
+    store kv
+    govern lex global/org/polyqlabs/billing
+    cortex {
+        obfuscate [blinded_token]
+        infer on_write
+    }
+
+data PaymentEventInfo : qkit v1 {
+    payment_id: bytes(32),
+    blinded_token: bytes(32),
+    amount_cents: u64,
+    currency: string,
+    payment_method_hash: bytes(32),
+    processed_at_ms: u64,
+    success: bool,
+}
+    store kv
+    govern lex global/org/polyqlabs/billing
+    cortex {
+        obfuscate [blinded_token, payment_method_hash]
+        redact [amount_cents]
+        infer on_write
+        on_anomaly alert "billing-team"
+    }
+
+// ── Edge types ──────────────────────────────────────────────────────
+
+type TriggeredByEdge = struct {
+    edge_id: bytes(16),
+    triggered_at: u64,
+}
+
+type PaidByEdge = struct {
+    edge_id: bytes(16),
+    paid_at: u64,
+    amount_cents: u64,
+}
+
+// ── State Machine ───────────────────────────────────────────────────
+
+state_machine subscription_lifecycle {
+    initial Free
+    persistence wal
+    terminal [Cancelled, Expired]
+    ai_anomaly_detection true
+
+    Free -> Premium when payment_verified
+    Free -> Pro when payment_verified
+    Free -> Enterprise when payment_verified
+    Premium -> Pro when upgrade_payment_verified
+    Premium -> Enterprise when upgrade_payment_verified
+    Premium -> Free when downgrade_requested
+    Premium -> Cancelled when cancellation_confirmed
+    Premium -> Expired when payment_failed_final
+    Pro -> Enterprise when upgrade_payment_verified
+    Pro -> Premium when downgrade_requested
+    Pro -> Free when downgrade_requested
+    Pro -> Cancelled when cancellation_confirmed
+    Pro -> Expired when payment_failed_final
+    Enterprise -> Pro when downgrade_requested
+    Enterprise -> Premium when downgrade_requested
+    Enterprise -> Free when downgrade_requested
+    Enterprise -> Cancelled when cancellation_confirmed
+    Enterprise -> Expired when payment_failed_final
+    Expired -> Free when reactivation_requested
+    Expired -> Premium when reactivation_payment_verified
+    Cancelled -> Free when reactivation_requested
+}
+
+// ── DAG definition ──────────────────────────────────────────────────
+
+dag subscription_history {
+    node SubscriptionEvent : SubscriptionEventInfo
+    node TierChange : TierChangeInfo
+    node PaymentEvent : PaymentEventInfo
+
+    edge triggered_by : TierChange -> SubscriptionEvent
+    edge paid_by : PaymentEvent -> TierChange
+
+    storage csr {
+        tier bram { capacity: 10_000 },
+        tier ddr { capacity: 1_000_000 },
+    }
+
+    sign ml_dsa_87
+    ai_feed subscription_patterns
+}
+
+// ── Series ──────────────────────────────────────────────────────────
+
+series subscription_series: subscription_history
+    merkle_chain true
+    lattice_imprint true
+    witness_attest true
+
+// ── Streams ─────────────────────────────────────────────────────────
+
+stream subscription_lifecycle_events: event<SubscriptionEventInfo>
+    retention 7y
+    consumers [billing, governance, audit, observe]
+
+stream payment_events: event<PaymentEventInfo>
+    retention 7y
+    consumers [billing, audit, compliance]
+
+stream tier_change_events: event<TierChangeInfo>
+    retention 7y
+    consumers [billing, governance, observe]
+
+// ── Circuits ────────────────────────────────────────────────────────
+
+/// Record a subscription state transition in the lifecycle DAG.
+circuit record_subscription_event(
+    dag_id: bytes(32),
+    blinded_token: bytes(32),
+    event_type: u8,
+    old_state: string,
+    new_state: string,
+    product_scope: string,
+) -> SubscriptionEventInfo
+    profile poly_framework_standard
+    lex global/org/polyqlabs/billing
+    @precision C
+    @attested true
+    @observe metrics: [subscription_events, state_transitions, events_per_product]
+    monitor "event_rate" { subscription_events < 1000 per 3600s }
+    invariant "token_valid" { len(blinded_token) == 32 }
+    invariant "states_different" { old_state != new_state }
+    property safety "no_identity_in_event" { event contains no SPARK identity }
+    property safety "dag_append_only" { no existing nodes modified }
+    property liveness "events_recorded" { eventually(subscription_events > 0) }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let ts = now()
+    let event_seed = csprng(32)
+    let event_id = sha3_256(concat(event_seed, blinded_token, encode(ts)))
+
+    let event = SubscriptionEventInfo {
+        event_id: event_id,
+        blinded_token: blinded_token,
+        event_type: event_type,
+        old_state: old_state,
+        new_state: new_state,
+        timestamp_ms: ts,
+        product_scope: product_scope,
+    }
+
+    eslite_insert("subscription_event_nodes", event_id, event)
+    emit(subscription_lifecycle_events, event)
+    zeroize(event_seed)
+    event
+}
+
+/// Record a tier change and link it to the triggering subscription event.
+circuit record_tier_change(
+    dag_id: bytes(32),
+    blinded_token: bytes(32),
+    from_tier: u8,
+    to_tier: u8,
+    reason: string,
+    subscription_event_id: bytes(32),
+) -> TierChangeInfo
+    profile poly_framework_standard
+    lex global/org/polyqlabs/billing
+    @precision C
+    @attested true
+    @observe metrics: [tier_changes, upgrades, downgrades]
+    monitor "tier_change_rate" { tier_changes < 500 per 3600s }
+    invariant "tiers_different" { from_tier != to_tier }
+    invariant "tiers_valid" { from_tier <= 3 and to_tier <= 3 }
+    invariant "event_exists" { eslite_exists("subscription_event_nodes", subscription_event_id) }
+    property safety "no_identity_leak" { change contains no SPARK identity }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let ts = now()
+    let change_seed = csprng(32)
+    let change_id = sha3_256(concat(change_seed, blinded_token, encode(from_tier), encode(to_tier)))
+
+    let change = TierChangeInfo {
+        change_id: change_id,
+        blinded_token: blinded_token,
+        from_tier: from_tier,
+        to_tier: to_tier,
+        reason: reason,
+        timestamp_ms: ts,
+    }
+
+    eslite_insert("tier_change_nodes", change_id, change)
+    let edge_id = bit_slice(sha3_256(concat(change_id, subscription_event_id)), 0, 128)
+    let edge = TriggeredByEdge { edge_id: edge_id, triggered_at: ts }
+    eslite_insert("triggered_by_edges", edge_id, { from: change_id, to: subscription_event_id, edge: edge })
+
+    if to_tier > from_tier {
+        emit(tier_change_events, change)
+    } else {
+        emit(tier_change_events, change)
+    }
+
+    zeroize(change_seed)
+    change
+}
+
+/// Record a payment event and link it to the tier change it funds.
+circuit record_payment(
+    dag_id: bytes(32),
+    blinded_token: bytes(32),
+    amount_cents: u64,
+    currency: string,
+    payment_method_hash: bytes(32),
+    tier_change_id: bytes(32),
+    success: bool,
+) -> PaymentEventInfo
+    profile poly_framework_sensitive
+    lex global/org/polyqlabs/billing
+    @precision C
+    @attested true
+    constant_time true
+    @observe metrics: [payments_processed, payment_successes, payment_failures, revenue_cents]
+    monitor "payment_failure_rate" { payment_failures < 100 per 3600s }
+    invariant "amount_positive" { amount_cents > 0 }
+    invariant "currency_valid" { len(currency) == 3 }
+    invariant "tier_change_exists" { eslite_exists("tier_change_nodes", tier_change_id) }
+    property safety "no_identity_in_payment" { payment contains no SPARK identity }
+    property safety "payment_method_blinded" { payment_method_hash is one-way hash }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let ts = now()
+    let payment_seed = csprng(32)
+    let payment_id = sha3_256(concat(payment_seed, blinded_token, encode(amount_cents), encode(ts)))
+
+    let payment = PaymentEventInfo {
+        payment_id: payment_id,
+        blinded_token: blinded_token,
+        amount_cents: amount_cents,
+        currency: currency,
+        payment_method_hash: payment_method_hash,
+        processed_at_ms: ts,
+        success: success,
+    }
+
+    eslite_insert("payment_event_nodes", payment_id, payment)
+    let edge_id = bit_slice(sha3_256(concat(payment_id, tier_change_id)), 0, 128)
+    let edge = PaidByEdge { edge_id: edge_id, paid_at: ts, amount_cents: amount_cents }
+    eslite_insert("paid_by_edges", edge_id, { from: payment_id, to: tier_change_id, edge: edge })
+
+    emit(payment_events, payment)
+    zeroize(payment_seed)
+    payment
+}
+
+/// Query the full subscription history for a blinded token (audit trail).
+circuit get_subscription_history(dag_id: bytes(32), blinded_token: bytes(32)) -> list<SubscriptionEventInfo>
+    profile poly_framework_standard
+    lex global/org/polyqlabs/billing
+    @precision B
+    @observe metrics: [history_queries, events_returned]
+    monitor "history_query_rate" { history_queries < 200 per 60s }
+    invariant "token_valid" { len(blinded_token) == 32 }
+    meters [compute_cycles, memory_bytes]
+    wasm_abi [eslite_scan]
+{
+    eslite_scan("subscription_event_nodes", blinded_token)
+}
+
+// ── Test / KAT / Fuzz annotations ──────────────────────────────────
+
+test golden "record_subscription_event_basic" {
+    input {
+        dag_id: hex("00" * 32)
+        blinded_token: hex("aa" * 32)
+        event_type: 1
+        old_state: "Free"
+        new_state: "Premium"
+        product_scope: "q-files-v1"
+    }
+    assert {
+        len(result.event_id) == 32
+        result.blinded_token == hex("aa" * 32)
+        result.old_state == "Free"
+        result.new_state == "Premium"
+        result.product_scope == "q-files-v1"
+        result.timestamp_ms > 0
+    }
+}
+
+test golden "record_tier_change_upgrade" {
+    setup {
+        let event = record_subscription_event(hex("00" * 32), hex("aa" * 32), 1, "Free", "Premium", "q-files-v1")
+    }
+    input {
+        dag_id: hex("00" * 32)
+        blinded_token: hex("aa" * 32)
+        from_tier: 0
+        to_tier: 1
+        reason: "user_upgrade"
+        subscription_event_id: event.event_id
+    }
+    assert {
+        len(result.change_id) == 32
+        result.from_tier == 0
+        result.to_tier == 1
+        result.reason == "user_upgrade"
+    }
+}
+
+test golden "record_payment_success" {
+    setup {
+        let event = record_subscription_event(hex("00" * 32), hex("bb" * 32), 1, "Free", "Pro", "q-git-v1")
+        let change = record_tier_change(hex("00" * 32), hex("bb" * 32), 0, 2, "upgrade", event.event_id)
+    }
+    input {
+        dag_id: hex("00" * 32)
+        blinded_token: hex("bb" * 32)
+        amount_cents: 1999
+        currency: "USD"
+        payment_method_hash: sha3_256("card_token_blinded")
+        tier_change_id: change.change_id
+        success: true
+    }
+    assert {
+        len(result.payment_id) == 32
+        result.amount_cents == 1999
+        result.currency == "USD"
+        result.success == true
+        result.processed_at_ms > 0
+    }
+}
+
+test golden "record_payment_failure" {
+    setup {
+        let event = record_subscription_event(hex("00" * 32), hex("cc" * 32), 1, "Premium", "Pro", "q-mail-v1")
+        let change = record_tier_change(hex("00" * 32), hex("cc" * 32), 1, 2, "upgrade_attempt", event.event_id)
+    }
+    input {
+        dag_id: hex("00" * 32)
+        blinded_token: hex("cc" * 32)
+        amount_cents: 2999
+        currency: "EUR"
+        payment_method_hash: sha3_256("card_token_declined")
+        tier_change_id: change.change_id
+        success: false
+    }
+    assert {
+        result.success == false
+        result.amount_cents == 2999
+        result.currency == "EUR"
+    }
+}
+
+fuzz_target "subscription_event_fuzz" {
+    inputs {
+        dag_id: bytes(32)
+        blinded_token: bytes(32)
+        event_type: u8(0..10)
+        old_state: string(1..64)
+        new_state: string(1..64)
+    }
+    assert {
+        no_panic
+    }
+}
+
+fuzz_target "payment_recording_fuzz" {
+    inputs {
+        dag_id: bytes(32)
+        blinded_token: bytes(32)
+        amount_cents: u64
+        currency: string(3..3)
+        payment_method_hash: bytes(32)
+        success: bool
+    }
+    assert {
+        no_panic
+        constant_time true
+    }
+}

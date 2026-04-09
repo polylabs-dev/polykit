@@ -8,7 +8,7 @@ Security Level: NIST Level 5 (ML-DSA-87, ML-KEM-1024)
 
 ## Executive Summary
 
-Platform backends that send messages to users via Poly Messenger must never hold complete signing keys. This specification defines the **threshold signing** and **blind relay** patterns that all sdk-backend implementations must follow.
+Platform backends that send messages to users via Q Messenger must never hold complete signing keys. This specification defines the **threshold signing** and **blind relay** patterns that all sdk-backend implementations must follow.
 
 ---
 
@@ -91,7 +91,7 @@ Without TEE (Trusted Execution Environment), any key held on a server can be:
 | Property | Implementation |
 |----------|----------------|
 | Key Storage | Device keychain / secure enclave |
-| Crypto | poly-core-wasm (WASM, sandboxed) |
+| Crypto | q-core-wasm (WASM, sandboxed) |
 | Auth | Spark visual authentication |
 | Transport | WebTransport to edge (E2E encrypted) |
 
@@ -234,7 +234,7 @@ pub async fn relay_message(envelope: EncryptedEnvelope) -> Result<()> {
 ### User → Platform (Reply)
 
 ```
-1. User composes reply in Poly app
+1. User composes reply in Q app
    └── "Confirm my investment"
 
 2. User encrypts to platform's public key
@@ -340,7 +340,7 @@ drop(vault); // All secrets wiped
 - [PQ_PRIVACY_PATTERNS.md](./crypto/PQ_PRIVACY_PATTERNS.md) - Threshold ML-DSA implementation
 - [ESTREAM_VAULT.md](./ESTREAM_VAULT.md) - Ephemeral credential storage
 - [EDGE_SLEEVE.md](./EDGE_SLEEVE.md) - Blind relay pattern
-- [BLIND_CONNECTION_PATTERN.md](../../polymessenger-app/docs/BLIND_CONNECTION_PATTERN.md) - User/platform linking
+- [BLIND_CONNECTION_PATTERN.md](../../qmessenger-app/docs/BLIND_CONNECTION_PATTERN.md) - User/platform linking
 
 ---
 

@@ -1,16 +1,16 @@
-# PolyKit Cognitive Engine + App Graph Framework
+# QKit Cognitive Engine + App Graph Framework
 
 > **Status**: In Progress
 > **Priority**: P0
 > **Estimated Effort**: ~3-4 weeks (4 phases)
-> **Target**: PolyKit v0.12.0 on eStream v0.22.0+
+> **Target**: QKit v0.12.0 on eStream v0.22.0+
 > **Depends On**: [eStream CE Implementation (Phase 1+)](https://github.com/polyquantum/estream/blob/main/.github/epics/EPIC_COGNITIVE_ENGINE.md)
 
 ---
 
 ## Overview
 
-Integrate the eStream Cognitive Engine (CE) into PolyKit as a shared framework layer, giving every Poly Labs product consistent, zero-linkage-compliant access to CE capabilities — SSM hidden state, observation routing, cortex advisors, and accretive learning. This epic introduces 4 new FastLang circuits (`polykit_cognitive.fl`, `polykit_noise_filter.fl`, `polykit_sme.fl`, `polykit_app_graph.fl`) that adapt eStream CE primitives into composable building blocks, plus an App Graph registration convention that enables products to declare their circuit topology and CE integration points. The framework brings PolyKit from 22 to 26 circuits and establishes the pattern all 38 Poly Labs products will follow for CE adoption.
+Integrate the eStream Cognitive Engine (CE) into QKit as a shared framework layer, giving every PolyQ Labs product consistent, zero-linkage-compliant access to CE capabilities — SSM hidden state, observation routing, cortex advisors, and accretive learning. This epic introduces 4 new FastLang circuits (`qkit_cognitive.fl`, `qkit_noise_filter.fl`, `qkit_sme.fl`, `qkit_app_graph.fl`) that adapt eStream CE primitives into composable building blocks, plus an App Graph registration convention that enables products to declare their circuit topology and CE integration points. The framework brings QKit from 22 to 26 circuits and establishes the pattern all 38 PolyQ Labs products will follow for CE adoption.
 
 ---
 
@@ -30,12 +30,12 @@ Integrate the eStream Cognitive Engine (CE) into PolyKit as a shared framework l
 
 ## Phase 2: CE Adapter Circuits
 
-Create the 4 new FastLang circuits that compose eStream CE primitives into the PolyKit shared framework.
+Create the 4 new FastLang circuits that compose eStream CE primitives into the QKit shared framework.
 
-- [x] `polykit_cognitive.fl` — CE adapter circuit (HKDF derivation, observation routing, SSM state binding, cortex advisor composition, license gate)
-- [x] `polykit_noise_filter.fl` — Observation noise filter (deduplication, rate limiting, relevance scoring, sensitivity classification, aggregation)
-- [x] `polykit_sme.fl` — SME panel framework (panel registration, lifecycle management, knowledge base binding, inference rule composition)
-- [x] `polykit_app_graph.fl` — App graph registry (product manifest, circuit topology, CE integration points, compliance mapping, upgrade coordination)
+- [x] `qkit_cognitive.fl` — CE adapter circuit (HKDF derivation, observation routing, SSM state binding, cortex advisor composition, license gate)
+- [x] `qkit_noise_filter.fl` — Observation noise filter (deduplication, rate limiting, relevance scoring, sensitivity classification, aggregation)
+- [x] `qkit_sme.fl` — SME panel framework (panel registration, lifecycle management, knowledge base binding, inference rule composition)
+- [x] `qkit_app_graph.fl` — App graph registry (product manifest, circuit topology, CE integration points, compliance mapping, upgrade coordination)
 
 ### Exit Criteria
 
@@ -66,24 +66,24 @@ Create per-product integration guides showing how each Tier 2 product composes t
 
 ### Tier 2 Products (P0 — First Wave)
 
-- [ ] **Poly Git** — VCS-specific CE: branching strategy SME, CI policy advisor, push anomaly detection
-- [ ] **Poly Files** — Storage-specific CE: access pattern learning, encryption key rotation advisor, scatter-CAS optimization
-- [ ] **Poly Messenger** — Communication-specific CE: message pattern anomaly, relay optimization, group dynamics advisor
-- [ ] **Poly Mail** — Email-specific CE: phishing detection SME, SMTP bridge optimization, compliance advisor
+- [ ] **Q Git** — VCS-specific CE: branching strategy SME, CI policy advisor, push anomaly detection
+- [ ] **Q Files** — Storage-specific CE: access pattern learning, encryption key rotation advisor, scatter-CAS optimization
+- [ ] **Q Messenger** — Communication-specific CE: message pattern anomaly, relay optimization, group dynamics advisor
+- [ ] **Q Mail** — Email-specific CE: phishing detection SME, SMTP bridge optimization, compliance advisor
 
 ### Tier 2 Products (P1 — Second Wave)
 
-- [ ] **Poly Docs** — Document-specific CE: collaboration pattern learning, CRDT conflict advisor, format optimization
-- [ ] **Poly Pass** — Security-specific CE: credential hygiene SME, breach detection, rotation policy advisor
-- [ ] **Poly VPN** — Network-specific CE: route optimization, traffic mimicry advisor, exit node selection
-- [ ] **Poly OAuth** — Identity-specific CE: auth pattern anomaly, token lifecycle advisor, SSO policy optimization
+- [ ] **Q Docs** — Document-specific CE: collaboration pattern learning, CRDT conflict advisor, format optimization
+- [ ] **Q Pass** — Security-specific CE: credential hygiene SME, breach detection, rotation policy advisor
+- [ ] **Q VPN** — Network-specific CE: route optimization, traffic mimicry advisor, exit node selection
+- [ ] **Q OAuth** — Identity-specific CE: auth pattern anomaly, token lifecycle advisor, SSO policy optimization
 
 ### Tier 2 Products (P2 — Third Wave)
 
-- [ ] **Poly Mind** — ESLM-specific CE: corpus curation advisor, inference quality SME, knowledge graph optimization
-- [ ] **Poly Wallet** — Financial-specific CE: transaction pattern learning, spend policy advisor, multi-asset optimization
-- [ ] **Poly Photos** — Media-specific CE: storage optimization, provenance tracking advisor, classification SME
-- [ ] **Poly Monitor** — Observability-specific CE: alert fatigue reduction, anomaly correlation, SLO advisor
+- [ ] **Q Mind** — ESLM-specific CE: corpus curation advisor, inference quality SME, knowledge graph optimization
+- [ ] **Q Wallet** — Financial-specific CE: transaction pattern learning, spend policy advisor, multi-asset optimization
+- [ ] **Q Photos** — Media-specific CE: storage optimization, provenance tracking advisor, classification SME
+- [ ] **Q Monitor** — Observability-specific CE: alert fatigue reduction, anomaly correlation, SLO advisor
 
 ### Exit Criteria
 
@@ -100,9 +100,9 @@ Create per-product integration guides showing how each Tier 2 product composes t
 |------------|--------|----------|
 | eStream CE Phase 1 (SSM, observation ingestion) | In Progress | Phase 2 |
 | eStream CE Phase 2 (cortex advisors) | Planned | Phase 4 (SME panels) |
-| PolyKit SLG validation (`polykit_governance.fl`) | Complete | Phase 2 (license gate) |
-| PolyKit zero-linkage (`polykit_zero_linkage.fl`) | Complete | Phase 2 (HKDF isolation) |
-| PolyKit blind telemetry (`polykit_blind_telemetry.fl`) | Complete | Phase 2 (CE metrics) |
+| QKit SLG validation (`qkit_governance.fl`) | Complete | Phase 2 (license gate) |
+| QKit zero-linkage (`qkit_zero_linkage.fl`) | Complete | Phase 2 (HKDF isolation) |
+| QKit blind telemetry (`qkit_blind_telemetry.fl`) | Complete | Phase 2 (CE metrics) |
 
 ---
 
@@ -110,7 +110,7 @@ Create per-product integration guides showing how each Tier 2 product composes t
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| eStream CE API changes during Phase 1 | Medium | High | Abstract behind adapter; only `polykit_cognitive.fl` touches raw CE API |
+| eStream CE API changes during Phase 1 | Medium | High | Abstract behind adapter; only `qkit_cognitive.fl` touches raw CE API |
 | Noise filter too aggressive in production | Medium | Medium | Conservative defaults (0.6 threshold); per-product override escape hatch |
 | SME panel knowledge base grows unbounded | Low | Medium | Delta-curate DAG with configurable retention windows |
 | Zero-linkage constraint blocks useful cross-product CE features | Medium | Medium | Client-side bridge provides opt-in cross-product view without server-side leakage |
@@ -121,8 +121,8 @@ Create per-product integration guides showing how each Tier 2 product composes t
 
 | Metric | Target |
 |--------|--------|
-| New CE circuits | 4 (polykit_cognitive, polykit_noise_filter, polykit_sme, polykit_app_graph) |
-| Total PolyKit circuits | 26 |
+| New CE circuits | 4 (qkit_cognitive, qkit_noise_filter, qkit_sme, qkit_app_graph) |
+| Total QKit circuits | 26 |
 | Products with CE integration guide | 12 (4 per wave × 3 waves) |
 | Zero-linkage violations | 0 |
 | CE observation noise reduction (production profile) | ≥60% reduction vs. unfiltered |
